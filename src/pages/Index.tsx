@@ -52,6 +52,23 @@ const Index = () => {
   const generationOptionsRef = useRef<GenerationOptions | null>(null);
   const proceedResolveRef = useRef<(() => void) | null>(null);
 
+  const handleReset = useCallback(() => {
+    setProgressStep("script");
+    setProgressCompletedSteps([]);
+    setWorkflowStep("model");
+    setWorkflowCompletedSteps([]);
+    setIsProcessing(false);
+    setIsWaitingForProceed(false);
+    setScript(null);
+    setScenes([]);
+    setCurrentlyGenerating(null);
+    setVideoUrl(null);
+    setIsGeneratingVideo(false);
+    setLogs([]);
+    generationOptionsRef.current = null;
+    proceedResolveRef.current = null;
+  }, []);
+
   const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
     const timestamp = new Date().toLocaleTimeString("en-US", { 
       hour12: false, 
@@ -317,11 +334,13 @@ const Index = () => {
           onGenerate={startGeneration}
           onProceedStep={handleProceedStep}
           onRunAutomatic={handleRunAutomatic}
-          isProcessing={isProcessing || isWaitingForProceed}
+          isProcessing={isProcessing}
+          isWaitingForProceed={isWaitingForProceed}
           currentStep={workflowStep}
           completedSteps={workflowCompletedSteps}
           isAutomatic={isAutomatic}
           onToggleMode={setIsAutomatic}
+          onReset={handleReset}
         />
 
         <AnimatePresence mode="wait">
