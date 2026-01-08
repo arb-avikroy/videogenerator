@@ -23,7 +23,7 @@ serve(async (req) => {
   }
 
   try {
-    const { topic, sceneCount = 6, sceneDuration = 5 } = await req.json();
+    const { topic, sceneCount = 6, sceneDuration = 5, model = "google/gemini-2.5-flash-exp:free" } = await req.json();
 
     if (!topic || typeof topic !== "string") {
       return new Response(
