@@ -32,11 +32,11 @@ serve(async (req) => {
       );
     }
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) {
-      console.error("GEMINI_API_KEY is not configured");
+    const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY");
+    if (!OPENROUTER_API_KEY) {
+      console.error("OPENROUTER_API_KEY is not configured");
       return new Response(
-        JSON.stringify({ error: "Gemini API key not configured" }),
+        JSON.stringify({ error: "OpenRouter API key not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -73,35 +73,33 @@ Respond ONLY with valid JSON in this exact format:
 }`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      "https://openrouter.ai/api/v1/chat/completions",
       {
         method: "POST",
         headers: {
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
           "Content-Type": "application/json",
+          "HTTP-Referer": "https://supabase.co", // Optional but recommended
+          "X-Title": "The Adventurous Investor" // Optional but recommended
         },
         body: JSON.stringify({
-          contents: [
+          model: "openai/gpt-oss-120b:free", // Free tier GPT OSS 120B
+          messages: [
             {
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
-            },
+              role: "user",
+              content: prompt
+            }
           ],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 2048,
-          },
+          temperature: 0.7,
+          top_p: 0.95,
+          max_tokens: 2048,
         }),
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("Gemini API error:", response.status, errorText);
+      console.error("OpenRouter API error:", response.status, errorText);
       return new Response(
         JSON.stringify({ error: "Failed to generate script", details: errorText }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -109,11 +107,11 @@ Respond ONLY with valid JSON in this exact format:
     }
 
     const data = await response.json();
-    console.log("Gemini response received");
+    console.log("OpenRouter response received");
 
-    const textContent = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const textContent = data.choices?.[0]?.message?.content;
     if (!textContent) {
-      console.error("No text content in Gemini response");
+      console.error("No text content in OpenRouter response");
       return new Response(
         JSON.stringify({ error: "No content generated" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
