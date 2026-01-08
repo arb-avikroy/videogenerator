@@ -89,7 +89,7 @@ const Index = () => {
           scenes: mockScenes
         };
       } else {
-        addLog(`Connecting to Gemini AI script generator (${sceneCount} scenes)...`, "info");
+        addLog(`Connecting to AI script generator (${sceneCount} scenes)...`, "info");
         
         const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
           "generate-script",
