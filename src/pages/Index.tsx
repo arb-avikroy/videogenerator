@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/Header";
 import { ProgressTracker, Step } from "@/components/ProgressTracker";
-import { InputSection } from "@/components/InputSection";
+import { InputSection, GenerationOptions } from "@/components/InputSection";
 import { ScriptPanel } from "@/components/ScriptPanel";
 import { ScenesPanel } from "@/components/ScenesPanel";
 import { VideoPreview } from "@/components/VideoPreview";
@@ -54,7 +54,8 @@ const Index = () => {
     setCompletedSteps(prev => [...prev, step]);
   }, []);
 
-  const generateVideo = async (topic: string) => {
+  const generateVideo = async (options: GenerationOptions) => {
+    const { topic, sceneCount, sceneDuration } = options;
     setIsProcessing(true);
     setLogs([]);
     setScript(null);
@@ -63,7 +64,7 @@ const Index = () => {
     
     // Step 1: Generate Script with Gemini AI
     setCurrentStep("script");
-    addLog(`Starting video generation for: "${topic}"`, "info");
+    addLog(`Starting video generation for: "${topic}" (${sceneCount} scenes, ${sceneDuration}s each)`, "info");
     
     try {
       let generatedScript: Script;
@@ -73,41 +74,26 @@ const Index = () => {
         addLog("Supabase not configured - using demo mode...", "warning");
         await new Promise(r => setTimeout(r, 1500));
         
+        const mockScenes: Scene[] = [];
+        for (let i = 1; i <= sceneCount; i++) {
+          mockScenes.push({
+            sceneNumber: i,
+            visualDescription: `Demo scene ${i} visual description for topic: ${topic}`,
+            narration: `This is demo narration for scene ${i} about ${topic}.`,
+            duration: sceneDuration
+          });
+        }
+        
         generatedScript = {
           title: `${topic}: A Deep Dive`,
-          scenes: [
-            {
-              sceneNumber: 1,
-              visualDescription: "A sweeping aerial view of a futuristic city with holographic stock charts floating above skyscrapers",
-              narration: `Welcome to our exploration of ${topic}. In today's rapidly evolving financial landscape, understanding these concepts is crucial.`,
-              duration: 5
-            },
-            {
-              sceneNumber: 2,
-              visualDescription: "Close-up of an AI neural network visualization with glowing data streams",
-              narration: "Artificial intelligence is revolutionizing how we approach investments, analyzing patterns that humans simply cannot perceive.",
-              duration: 5
-            },
-            {
-              sceneNumber: 3,
-              visualDescription: "A diverse group of investors looking at charts on transparent screens",
-              narration: "Smart investors are already leveraging these technologies to gain competitive advantages in the market.",
-              duration: 5
-            },
-            {
-              sceneNumber: 4,
-              visualDescription: "A mountain peak at sunrise with a winding trail made of golden coins",
-              narration: "The journey to financial success is an adventure. With the right tools and knowledge, you can reach new heights.",
-              duration: 5
-            }
-          ]
+          scenes: mockScenes
         };
       } else {
-        addLog("Connecting to Gemini AI script generator...", "info");
+        addLog(`Connecting to Gemini AI script generator (${sceneCount} scenes)...`, "info");
         
         const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
           "generate-script",
-          { body: { topic } }
+          { body: { topic, sceneCount, sceneDuration } }
         );
 
         if (scriptError) {

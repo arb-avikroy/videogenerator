@@ -23,7 +23,7 @@ serve(async (req) => {
   }
 
   try {
-    const { topic } = await req.json();
+    const { topic, sceneCount = 6, sceneDuration = 5 } = await req.json();
 
     if (!topic || typeof topic !== "string") {
       return new Response(
@@ -36,12 +36,13 @@ serve(async (req) => {
     if (!OPENROUTER_API_KEY) {
       console.error("OPENROUTER_API_KEY is not configured");
       return new Response(
-        JSON.stringify({ error: "OpenRouter API key not configured" }),
+        JSON.stringify({ error: "OpenRouter API key not configured. Please add OPENROUTER_API_KEY to Supabase secrets." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Generating script for topic: ${topic}`);
+    const totalDuration = sceneCount * sceneDuration;
+    console.log(`Generating script for topic: ${topic} with ${sceneCount} scenes of ${sceneDuration}s each (total: ${totalDuration}s)`);
 
     const systemPrompt = `You are an expert video script writer for "The Adventurous Investor" YouTube channel. You create compelling, educational video scripts.
 
@@ -50,7 +51,7 @@ The script should:
 - Include relevant financial/investment insights
 - Use adventure/exploration metaphors where appropriate
 - End with a call to action or inspiring conclusion
-- Total video length should be 30-45 seconds
+- Total video length should be approximately ${totalDuration} seconds
 
 Respond ONLY with valid JSON in this exact format:
 {
@@ -60,35 +61,40 @@ Respond ONLY with valid JSON in this exact format:
       "sceneNumber": 1,
       "visualDescription": "Detailed description for AI image generation",
       "narration": "The narration text for this scene",
-      "duration": 5
+      "duration": ${sceneDuration}
     }
   ]
 }`;
 
-    const response = await fetch(
-      "https://openrouter.ai/api/v1/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://supabase.co", // Optional but recommended
-          "X-Title": "The Adventurous Investor" // Optional but recommended
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-oss-120b:free", // Free tier GPT OSS 120B
-          messages: [
-            {
-              role: "user",
-              content: prompt
-            }
-          ],
-          temperature: 0.7,
-          top_p: 0.95,
-          max_tokens: 2048,
-        }),
-      }
-    );
+    const userPrompt = `Create a video script with EXACTLY ${sceneCount} scenes about the following topic:
+
+Topic: ${topic}
+
+Each scene should have:
+1. A detailed visual description for AI image generation (be specific about colors, composition, elements)
+2. Narration text that is engaging and educational
+3. Duration of ${sceneDuration} seconds per scene
+
+IMPORTANT: Generate exactly ${sceneCount} scenes, no more, no less.`;
+
+    const model = "google/gemini-2.5-flash";
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://lovable.dev",
+        "X-Title": "The Adventurous Investor"
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+      }),
+    });
 
     if (!response.ok) {
       if (response.status === 429) {
@@ -118,7 +124,7 @@ Respond ONLY with valid JSON in this exact format:
 
     const textContent = data.choices?.[0]?.message?.content;
     if (!textContent) {
-      console.error("No text content in OpenRouter response");
+      console.error("No text content in response");
       return new Response(
         JSON.stringify({ error: "No content generated" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -161,7 +167,7 @@ Respond ONLY with valid JSON in this exact format:
     console.log(`Script generated successfully with ${scriptData.scenes.length} scenes`);
 
     return new Response(
-      JSON.stringify({ ...scriptData, _meta: { provider: "openrouter", model } }),
+      JSON.stringify({ ...scriptData, _meta: { provider: "openrouter", model, requestedScenes: sceneCount, requestedDuration: sceneDuration } }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
