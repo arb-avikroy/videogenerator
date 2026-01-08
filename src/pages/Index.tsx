@@ -111,7 +111,24 @@ const Index = () => {
         );
 
         if (scriptError) {
-          throw new Error(scriptError.message || "Failed to generate script");
+          const anyErr = scriptError as any;
+          const body = anyErr?.context?.body;
+
+          let message = scriptError.message || "Failed to generate script";
+          if (body) {
+            if (typeof body === "string") {
+              try {
+                const parsed = JSON.parse(body);
+                message = parsed?.error || parsed?.message || message;
+              } catch {
+                // ignore
+              }
+            } else if (typeof body === "object") {
+              message = body?.error || body?.message || message;
+            }
+          }
+
+          throw new Error(message);
         }
 
         if (!scriptData || !scriptData.scenes) {
