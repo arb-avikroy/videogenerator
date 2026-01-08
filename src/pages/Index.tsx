@@ -8,7 +8,7 @@ import { ScenesPanel } from "@/components/ScenesPanel";
 import { VideoPreview } from "@/components/VideoPreview";
 import { ProcessingLogs } from "@/components/ProcessingLogs";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 
 interface Scene {
   sceneNumber: number;
@@ -64,33 +64,73 @@ const Index = () => {
     // Step 1: Generate Script with Gemini AI
     setCurrentStep("script");
     addLog(`Starting video generation for: "${topic}"`, "info");
-    addLog("Connecting to Gemini AI script generator...", "info");
     
     try {
-      const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
-        "generate-script",
-        { body: { topic } }
-      );
+      let generatedScript: Script;
 
-      if (scriptError) {
-        throw new Error(scriptError.message || "Failed to generate script");
+      if (!isSupabaseConfigured()) {
+        // Fallback to mock data when Supabase is not configured
+        addLog("Supabase not configured - using demo mode...", "warning");
+        await new Promise(r => setTimeout(r, 1500));
+        
+        generatedScript = {
+          title: `${topic}: A Deep Dive`,
+          scenes: [
+            {
+              sceneNumber: 1,
+              visualDescription: "A sweeping aerial view of a futuristic city with holographic stock charts floating above skyscrapers",
+              narration: `Welcome to our exploration of ${topic}. In today's rapidly evolving financial landscape, understanding these concepts is crucial.`,
+              duration: 5
+            },
+            {
+              sceneNumber: 2,
+              visualDescription: "Close-up of an AI neural network visualization with glowing data streams",
+              narration: "Artificial intelligence is revolutionizing how we approach investments, analyzing patterns that humans simply cannot perceive.",
+              duration: 5
+            },
+            {
+              sceneNumber: 3,
+              visualDescription: "A diverse group of investors looking at charts on transparent screens",
+              narration: "Smart investors are already leveraging these technologies to gain competitive advantages in the market.",
+              duration: 5
+            },
+            {
+              sceneNumber: 4,
+              visualDescription: "A mountain peak at sunrise with a winding trail made of golden coins",
+              narration: "The journey to financial success is an adventure. With the right tools and knowledge, you can reach new heights.",
+              duration: 5
+            }
+          ]
+        };
+      } else {
+        addLog("Connecting to Gemini AI script generator...", "info");
+        
+        const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
+          "generate-script",
+          { body: { topic } }
+        );
+
+        if (scriptError) {
+          throw new Error(scriptError.message || "Failed to generate script");
+        }
+
+        if (!scriptData || !scriptData.scenes) {
+          throw new Error("Invalid script response");
+        }
+
+        generatedScript = {
+          title: scriptData.title,
+          scenes: scriptData.scenes.map((scene: Scene) => ({
+            ...scene,
+            imageUrl: undefined
+          }))
+        };
+        
+        addLog("Script generated successfully with Gemini AI!", "success");
       }
-
-      if (!scriptData || !scriptData.scenes) {
-        throw new Error("Invalid script response");
-      }
-
-      const generatedScript: Script = {
-        title: scriptData.title,
-        scenes: scriptData.scenes.map((scene: Scene) => ({
-          ...scene,
-          imageUrl: undefined
-        }))
-      };
       
       setScript(generatedScript);
       setScenes(generatedScript.scenes);
-      addLog("Script generated successfully with Gemini AI!", "success");
       addLog(`Created ${generatedScript.scenes.length} scenes`, "info");
       completeStep("script");
     
