@@ -237,12 +237,7 @@ const Index = () => {
       // Step 1: Script Generation
       setWorkflowStep("script");
       setProgressStep("script");
-      
-      if (!isAutomatic) {
-        addLog("Waiting to proceed with script generation...", "info");
-        await waitForProceed();
-      }
-      
+
       addLog("Generating script...", "info");
       const generatedScript = await generateScript(options);
       setScript(generatedScript);
