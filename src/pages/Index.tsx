@@ -181,19 +181,38 @@ const Index = () => {
     
     for (let i = 0; i < scriptScenes.length; i++) {
       setCurrentlyGenerating(scriptScenes[i].sceneNumber);
+      const scene = scriptScenes[i];
       addLog(`Generating image for Scene ${i + 1}...`, "info");
-      await new Promise(r => setTimeout(r, 2000));
       
-      const placeholderImages = [
-        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop",
-        "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=400&h=400&fit=crop",
-        "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=400&fit=crop",
-        "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop"
-      ];
-      
-      updatedScenes[i] = { ...updatedScenes[i], imageUrl: placeholderImages[i % placeholderImages.length] };
-      setScenes([...updatedScenes]);
-      addLog(`Scene ${i + 1} image generated successfully`, "success");
+      try {
+        const { data, error } = await supabase.functions.invoke('generate-image', {
+          body: {
+            prompt: `Create a high-quality, cinematic image for a video scene: ${scene.visualDescription}. Style: Professional, visually striking, suitable for video content.`,
+            sceneNumber: scene.sceneNumber
+          }
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        if (!data.success) {
+          throw new Error(data.error || 'Image generation failed');
+        }
+
+        updatedScenes[i] = { ...updatedScenes[i], imageUrl: data.imageUrl };
+        setScenes([...updatedScenes]);
+        addLog(`Scene ${i + 1} image generated successfully`, "success");
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+        addLog(`Failed to generate image for Scene ${i + 1}: ${errorMsg}`, "error");
+        // Use a placeholder on failure
+        updatedScenes[i] = { 
+          ...updatedScenes[i], 
+          imageUrl: `https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop` 
+        };
+        setScenes([...updatedScenes]);
+      }
     }
     
     setCurrentlyGenerating(null);
