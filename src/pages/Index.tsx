@@ -8,6 +8,7 @@ import { ScenesPanel } from "@/components/ScenesPanel";
 import { VideoPreview } from "@/components/VideoPreview";
 import { ProcessingLogs } from "@/components/ProcessingLogs";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 interface Scene {
   sceneNumber: number;
@@ -53,113 +54,116 @@ const Index = () => {
     setCompletedSteps(prev => [...prev, step]);
   }, []);
 
-  const simulateGeneration = async (topic: string) => {
+  const generateVideo = async (topic: string) => {
     setIsProcessing(true);
     setLogs([]);
+    setScript(null);
+    setScenes([]);
+    setVideoUrl(null);
     
-    // Step 1: Generate Script
+    // Step 1: Generate Script with Gemini AI
     setCurrentStep("script");
     addLog(`Starting video generation for: "${topic}"`, "info");
-    addLog("Connecting to AI script generator...", "info");
+    addLog("Connecting to Gemini AI script generator...", "info");
     
-    await new Promise(r => setTimeout(r, 1500));
+    try {
+      const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
+        "generate-script",
+        { body: { topic } }
+      );
+
+      if (scriptError) {
+        throw new Error(scriptError.message || "Failed to generate script");
+      }
+
+      if (!scriptData || !scriptData.scenes) {
+        throw new Error("Invalid script response");
+      }
+
+      const generatedScript: Script = {
+        title: scriptData.title,
+        scenes: scriptData.scenes.map((scene: Scene) => ({
+          ...scene,
+          imageUrl: undefined
+        }))
+      };
+      
+      setScript(generatedScript);
+      setScenes(generatedScript.scenes);
+      addLog("Script generated successfully with Gemini AI!", "success");
+      addLog(`Created ${generatedScript.scenes.length} scenes`, "info");
+      completeStep("script");
     
-    const mockScript: Script = {
-      title: `${topic}: A Deep Dive`,
-      scenes: [
-        {
-          sceneNumber: 1,
-          visualDescription: "A sweeping aerial view of a futuristic city with holographic stock charts floating above skyscrapers",
-          narration: `Welcome to our exploration of ${topic}. In today's rapidly evolving financial landscape, understanding these concepts is crucial.`,
-          duration: 5
-        },
-        {
-          sceneNumber: 2,
-          visualDescription: "Close-up of an AI neural network visualization with glowing data streams",
-          narration: "Artificial intelligence is revolutionizing how we approach investments, analyzing patterns that humans simply cannot perceive.",
-          duration: 5
-        },
-        {
-          sceneNumber: 3,
-          visualDescription: "A diverse group of investors looking at charts on transparent screens",
-          narration: "Smart investors are already leveraging these technologies to gain competitive advantages in the market.",
-          duration: 5
-        },
-        {
-          sceneNumber: 4,
-          visualDescription: "A mountain peak at sunrise with a winding trail made of golden coins",
-          narration: "The journey to financial success is an adventure. With the right tools and knowledge, you can reach new heights.",
-          duration: 5
-        }
-      ]
-    };
-    
-    setScript(mockScript);
-    setScenes(mockScript.scenes);
-    addLog("Script generated successfully!", "success");
-    addLog(`Created ${mockScript.scenes.length} scenes`, "info");
-    completeStep("script");
-    
-    // Step 2: Generate Images
-    setCurrentStep("images");
-    addLog("Starting image generation with Grok Imagine API...", "info");
-    
-    for (let i = 0; i < mockScript.scenes.length; i++) {
-      setCurrentlyGenerating(mockScript.scenes[i].sceneNumber);
-      addLog(`Generating image for Scene ${i + 1}...`, "info");
+      // Step 2: Generate Images (placeholder for now)
+      setCurrentStep("images");
+      addLog("Starting image generation with Grok Imagine API...", "info");
+      
+      for (let i = 0; i < generatedScript.scenes.length; i++) {
+        setCurrentlyGenerating(generatedScript.scenes[i].sceneNumber);
+        addLog(`Generating image for Scene ${i + 1}...`, "info");
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Placeholder images (Grok API integration coming next)
+        const placeholderImages = [
+          "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop",
+          "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=400&h=400&fit=crop",
+          "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=400&fit=crop",
+          "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop"
+        ];
+        
+        setScenes(prev => prev.map((scene, idx) => 
+          idx === i ? { ...scene, imageUrl: placeholderImages[i % placeholderImages.length] } : scene
+        ));
+        addLog(`Scene ${i + 1} image generated successfully`, "success");
+      }
+      
+      setCurrentlyGenerating(null);
+      completeStep("images");
+      
+      // Step 3: Merge Video
+      setCurrentStep("merge");
+      setIsGeneratingVideo(true);
+      addLog("Starting video merge process...", "info");
+      addLog("Converting images to video frames...", "info");
+      await new Promise(r => setTimeout(r, 1500));
+      addLog("Adding narration audio tracks...", "info");
+      await new Promise(r => setTimeout(r, 1500));
+      addLog("Concatenating video clips...", "info");
       await new Promise(r => setTimeout(r, 2000));
+      addLog("Encoding final video (MP4, 1920x1080, 30fps)...", "info");
+      await new Promise(r => setTimeout(r, 1500));
       
-      // Simulate image URL (in production, this would be from Grok API)
-      const placeholderImages = [
-        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop",
-        "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=400&h=400&fit=crop",
-        "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=400&fit=crop",
-        "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop"
-      ];
+      // Simulate video URL
+      setVideoUrl("https://www.w3schools.com/html/mov_bbb.mp4");
+      setIsGeneratingVideo(false);
+      addLog("Video merged successfully!", "success");
+      completeStep("merge");
       
-      setScenes(prev => prev.map((scene, idx) => 
-        idx === i ? { ...scene, imageUrl: placeholderImages[i % placeholderImages.length] } : scene
-      ));
-      addLog(`Scene ${i + 1} image generated successfully`, "success");
+      // Step 4: Review
+      setCurrentStep("review");
+      addLog("Video ready for review", "info");
+      await new Promise(r => setTimeout(r, 500));
+      completeStep("review");
+      
+      // Step 5: Ready for Download
+      setCurrentStep("download");
+      addLog("Video generation complete! Ready for download.", "success");
+      completeStep("download");
+      
+      toast.success("Video generated successfully!", {
+        description: "Your video is ready for download."
+      });
+
+    } catch (error) {
+      console.error("Generation error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      addLog(`Error: ${errorMessage}`, "error");
+      toast.error("Failed to generate video", {
+        description: errorMessage
+      });
+    } finally {
+      setIsProcessing(false);
     }
-    
-    setCurrentlyGenerating(null);
-    completeStep("images");
-    
-    // Step 3: Merge Video
-    setCurrentStep("merge");
-    setIsGeneratingVideo(true);
-    addLog("Starting video merge process...", "info");
-    addLog("Converting images to video frames...", "info");
-    await new Promise(r => setTimeout(r, 1500));
-    addLog("Adding narration audio tracks...", "info");
-    await new Promise(r => setTimeout(r, 1500));
-    addLog("Concatenating video clips...", "info");
-    await new Promise(r => setTimeout(r, 2000));
-    addLog("Encoding final video (MP4, 1920x1080, 30fps)...", "info");
-    await new Promise(r => setTimeout(r, 1500));
-    
-    // Simulate video URL
-    setVideoUrl("https://www.w3schools.com/html/mov_bbb.mp4");
-    setIsGeneratingVideo(false);
-    addLog("Video merged successfully!", "success");
-    completeStep("merge");
-    
-    // Step 4: Review
-    setCurrentStep("review");
-    addLog("Video ready for review", "info");
-    await new Promise(r => setTimeout(r, 500));
-    completeStep("review");
-    
-    // Step 5: Ready for Download
-    setCurrentStep("download");
-    addLog("Video generation complete! Ready for download.", "success");
-    completeStep("download");
-    
-    setIsProcessing(false);
-    toast.success("Video generated successfully!", {
-      description: "Your video is ready for download."
-    });
   };
 
   const handleDownload = () => {
@@ -185,7 +189,7 @@ const Index = () => {
         />
         
         <InputSection 
-          onGenerate={simulateGeneration} 
+          onGenerate={generateVideo} 
           isProcessing={isProcessing} 
         />
 
