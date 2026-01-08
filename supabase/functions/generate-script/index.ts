@@ -43,14 +43,7 @@ serve(async (req) => {
 
     console.log(`Generating script for topic: ${topic}`);
 
-    const prompt = `You are an expert video script writer for "The Adventurous Investor" YouTube channel. Create a compelling, educational video script about the following topic:
-
-Topic: ${topic}
-
-Generate a structured video script with 4-6 scenes. Each scene should have:
-1. A detailed visual description for AI image generation (be specific about colors, composition, elements)
-2. Narration text that is engaging and educational
-3. Duration in seconds (typically 5-8 seconds per scene)
+    const systemPrompt = `You are an expert video script writer for "The Adventurous Investor" YouTube channel. You create compelling, educational video scripts.
 
 The script should:
 - Start with a hook that grabs attention
@@ -98,6 +91,20 @@ Respond ONLY with valid JSON in this exact format:
     );
 
     if (!response.ok) {
+      if (response.status === 429) {
+        console.error("Rate limit exceeded");
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (response.status === 402) {
+        console.error("Payment required");
+        return new Response(
+          JSON.stringify({ error: "AI credits exhausted. Please add credits to continue." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       const errorText = await response.text();
       console.error("OpenRouter API error:", response.status, errorText);
       return new Response(
@@ -154,7 +161,7 @@ Respond ONLY with valid JSON in this exact format:
     console.log(`Script generated successfully with ${scriptData.scenes.length} scenes`);
 
     return new Response(
-      JSON.stringify(scriptData),
+      JSON.stringify({ ...scriptData, _meta: { provider: "openrouter", model } }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
