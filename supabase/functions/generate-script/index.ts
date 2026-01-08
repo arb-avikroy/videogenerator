@@ -44,7 +44,7 @@ serve(async (req) => {
     const totalDuration = sceneCount * sceneDuration;
     console.log(`Generating script for topic: ${topic} with ${sceneCount} scenes of ${sceneDuration}s each (total: ${totalDuration}s)`);
 
-    const systemPrompt = `You are an expert video script writer for "The Adventurous Investor" YouTube channel. You create compelling, educational video scripts.
+    const systemPrompt = `You are an expert video script writer. You create compelling, viral seo optimzied video scripts.
 
 The script should:
 - Start with a hook that grabs attention
@@ -77,7 +77,7 @@ Each scene should have:
 
 IMPORTANT: Generate exactly ${sceneCount} scenes, no more, no less.`;
 
-    const model = "google/gemini-2.5-flash";
+    const model = "openai/gpt-oss-120b:free";
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
