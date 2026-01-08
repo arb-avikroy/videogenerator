@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Header } from "@/components/Header";
 import { ProgressTracker, Step } from "@/components/ProgressTracker";
@@ -7,6 +7,7 @@ import { ScriptPanel } from "@/components/ScriptPanel";
 import { ScenesPanel } from "@/components/ScenesPanel";
 import { VideoPreview } from "@/components/VideoPreview";
 import { ProcessingLogs } from "@/components/ProcessingLogs";
+import { WorkflowStep } from "@/components/WorkflowControls";
 import { toast } from "sonner";
 import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 
@@ -30,8 +31,15 @@ interface LogEntry {
 }
 
 const Index = () => {
-  const [currentStep, setCurrentStep] = useState<Step>("script");
-  const [completedSteps, setCompletedSteps] = useState<Step[]>([]);
+  const [progressStep, setProgressStep] = useState<Step>("script");
+  const [progressCompletedSteps, setProgressCompletedSteps] = useState<Step[]>([]);
+  
+  // Workflow state
+  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("model");
+  const [workflowCompletedSteps, setWorkflowCompletedSteps] = useState<WorkflowStep[]>([]);
+  const [isAutomatic, setIsAutomatic] = useState(false);
+  const [isWaitingForProceed, setIsWaitingForProceed] = useState(false);
+  
   const [isProcessing, setIsProcessing] = useState(false);
   const [script, setScript] = useState<Script | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
@@ -39,6 +47,10 @@ const Index = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  
+  // Store generation options for step-by-step
+  const generationOptionsRef = useRef<GenerationOptions | null>(null);
+  const proceedResolveRef = useRef<(() => void) | null>(null);
 
   const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
     const timestamp = new Date().toLocaleTimeString("en-US", { 
@@ -50,148 +62,217 @@ const Index = () => {
     setLogs(prev => [...prev, { timestamp, message, type }]);
   }, []);
 
-  const completeStep = useCallback((step: Step) => {
-    setCompletedSteps(prev => [...prev, step]);
+  const completeProgressStep = useCallback((step: Step) => {
+    setProgressCompletedSteps(prev => [...prev, step]);
   }, []);
 
-  const generateVideo = async (options: GenerationOptions) => {
-    const { topic, sceneCount, sceneDuration } = options;
+  const completeWorkflowStep = useCallback((step: WorkflowStep) => {
+    setWorkflowCompletedSteps(prev => [...prev, step]);
+  }, []);
+
+  const waitForProceed = (): Promise<void> => {
+    return new Promise((resolve) => {
+      setIsWaitingForProceed(true);
+      setIsProcessing(false);
+      proceedResolveRef.current = resolve;
+    });
+  };
+
+  const handleProceedStep = () => {
+    if (proceedResolveRef.current) {
+      setIsWaitingForProceed(false);
+      setIsProcessing(true);
+      proceedResolveRef.current();
+      proceedResolveRef.current = null;
+    }
+  };
+
+  const handleRunAutomatic = () => {
+    // Continue automatically without waiting
+    if (proceedResolveRef.current) {
+      proceedResolveRef.current();
+      proceedResolveRef.current = null;
+    }
+  };
+
+  const generateScript = async (options: GenerationOptions): Promise<Script> => {
+    const { topic, sceneCount, sceneDuration, model } = options;
+    
+    if (!isSupabaseConfigured()) {
+      addLog("Supabase not configured - using demo mode...", "warning");
+      await new Promise(r => setTimeout(r, 1500));
+      
+      const mockScenes: Scene[] = [];
+      for (let i = 1; i <= sceneCount; i++) {
+        mockScenes.push({
+          sceneNumber: i,
+          visualDescription: `Demo scene ${i} visual description for topic: ${topic}`,
+          narration: `This is demo narration for scene ${i} about ${topic}.`,
+          duration: sceneDuration
+        });
+      }
+      
+      return {
+        title: `${topic}: A Deep Dive`,
+        scenes: mockScenes
+      };
+    }
+
+    addLog(`Connecting to AI script generator (${model})...`, "info");
+    
+    const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
+      "generate-script",
+      { body: { topic, sceneCount, sceneDuration, model } }
+    );
+
+    if (scriptError) {
+      const anyErr = scriptError as any;
+      const body = anyErr?.context?.body;
+
+      let message = scriptError.message || "Failed to generate script";
+      if (body) {
+        if (typeof body === "string") {
+          try {
+            const parsed = JSON.parse(body);
+            message = parsed?.error || parsed?.message || message;
+          } catch {
+            // ignore
+          }
+        } else if (typeof body === "object") {
+          message = body?.error || body?.message || message;
+        }
+      }
+
+      throw new Error(message);
+    }
+
+    if (!scriptData || !scriptData.scenes) {
+      throw new Error("Invalid script response");
+    }
+
+    return {
+      title: scriptData.title,
+      scenes: scriptData.scenes.map((scene: Scene) => ({
+        ...scene,
+        imageUrl: undefined
+      }))
+    };
+  };
+
+  const generateImages = async (scriptScenes: Scene[]): Promise<Scene[]> => {
+    const updatedScenes: Scene[] = [...scriptScenes];
+    
+    for (let i = 0; i < scriptScenes.length; i++) {
+      setCurrentlyGenerating(scriptScenes[i].sceneNumber);
+      addLog(`Generating image for Scene ${i + 1}...`, "info");
+      await new Promise(r => setTimeout(r, 2000));
+      
+      const placeholderImages = [
+        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop",
+        "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=400&h=400&fit=crop",
+        "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=400&fit=crop",
+        "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop"
+      ];
+      
+      updatedScenes[i] = { ...updatedScenes[i], imageUrl: placeholderImages[i % placeholderImages.length] };
+      setScenes([...updatedScenes]);
+      addLog(`Scene ${i + 1} image generated successfully`, "success");
+    }
+    
+    setCurrentlyGenerating(null);
+    return updatedScenes;
+  };
+
+  const generateVideo = async (): Promise<string> => {
+    setIsGeneratingVideo(true);
+    addLog("Starting video merge process...", "info");
+    addLog("Converting images to video frames...", "info");
+    await new Promise(r => setTimeout(r, 1500));
+    addLog("Adding narration audio tracks...", "info");
+    await new Promise(r => setTimeout(r, 1500));
+    addLog("Concatenating video clips...", "info");
+    await new Promise(r => setTimeout(r, 2000));
+    addLog("Encoding final video (MP4, 1920x1080, 30fps)...", "info");
+    await new Promise(r => setTimeout(r, 1500));
+    
+    setIsGeneratingVideo(false);
+    return "https://www.w3schools.com/html/mov_bbb.mp4";
+  };
+
+  const startGeneration = async (options: GenerationOptions) => {
+    generationOptionsRef.current = options;
     setIsProcessing(true);
     setLogs([]);
     setScript(null);
     setScenes([]);
     setVideoUrl(null);
+    setWorkflowCompletedSteps([]);
+    setProgressCompletedSteps([]);
     
-    // Step 1: Generate Script with Gemini AI
-    setCurrentStep("script");
-    addLog(`Starting video generation for: "${topic}" (${sceneCount} scenes, ${sceneDuration}s each)`, "info");
+    const { topic, sceneCount, sceneDuration } = options;
     
     try {
-      let generatedScript: Script;
-
-      if (!isSupabaseConfigured()) {
-        // Fallback to mock data when Supabase is not configured
-        addLog("Supabase not configured - using demo mode...", "warning");
-        await new Promise(r => setTimeout(r, 1500));
-        
-        const mockScenes: Scene[] = [];
-        for (let i = 1; i <= sceneCount; i++) {
-          mockScenes.push({
-            sceneNumber: i,
-            visualDescription: `Demo scene ${i} visual description for topic: ${topic}`,
-            narration: `This is demo narration for scene ${i} about ${topic}.`,
-            duration: sceneDuration
-          });
-        }
-        
-        generatedScript = {
-          title: `${topic}: A Deep Dive`,
-          scenes: mockScenes
-        };
-      } else {
-        addLog(`Connecting to AI script generator (${sceneCount} scenes)...`, "info");
-        
-        const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
-          "generate-script",
-          { body: { topic, sceneCount, sceneDuration } }
-        );
-
-        if (scriptError) {
-          const anyErr = scriptError as any;
-          const body = anyErr?.context?.body;
-
-          let message = scriptError.message || "Failed to generate script";
-          if (body) {
-            if (typeof body === "string") {
-              try {
-                const parsed = JSON.parse(body);
-                message = parsed?.error || parsed?.message || message;
-              } catch {
-                // ignore
-              }
-            } else if (typeof body === "object") {
-              message = body?.error || body?.message || message;
-            }
-          }
-
-          throw new Error(message);
-        }
-
-        if (!scriptData || !scriptData.scenes) {
-          throw new Error("Invalid script response");
-        }
-
-        generatedScript = {
-          title: scriptData.title,
-          scenes: scriptData.scenes.map((scene: Scene) => ({
-            ...scene,
-            imageUrl: undefined
-          }))
-        };
-        
-        addLog("Script generated successfully with Gemini AI!", "success");
+      // Complete model selection step
+      completeWorkflowStep("model");
+      addLog(`Starting video generation for: "${topic}" (${sceneCount} scenes, ${sceneDuration}s each)`, "info");
+      addLog(`Using model: ${options.model}`, "info");
+      
+      // Step 1: Script Generation
+      setWorkflowStep("script");
+      setProgressStep("script");
+      
+      if (!isAutomatic) {
+        addLog("Waiting to proceed with script generation...", "info");
+        await waitForProceed();
       }
       
+      addLog("Generating script...", "info");
+      const generatedScript = await generateScript(options);
       setScript(generatedScript);
       setScenes(generatedScript.scenes);
-      addLog(`Created ${generatedScript.scenes.length} scenes`, "info");
-      completeStep("script");
-    
-      // Step 2: Generate Images (placeholder for now)
-      setCurrentStep("images");
-      addLog("Starting image generation with Grok Imagine API...", "info");
+      addLog(`Script generated successfully with ${generatedScript.scenes.length} scenes!`, "success");
+      completeProgressStep("script");
+      completeWorkflowStep("script");
       
-      for (let i = 0; i < generatedScript.scenes.length; i++) {
-        setCurrentlyGenerating(generatedScript.scenes[i].sceneNumber);
-        addLog(`Generating image for Scene ${i + 1}...`, "info");
-        await new Promise(r => setTimeout(r, 2000));
-        
-        // Placeholder images (Grok API integration coming next)
-        const placeholderImages = [
-          "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop",
-          "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=400&h=400&fit=crop",
-          "https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=400&h=400&fit=crop",
-          "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop"
-        ];
-        
-        setScenes(prev => prev.map((scene, idx) => 
-          idx === i ? { ...scene, imageUrl: placeholderImages[i % placeholderImages.length] } : scene
-        ));
-        addLog(`Scene ${i + 1} image generated successfully`, "success");
+      // Step 2: Image Generation
+      setWorkflowStep("images");
+      setProgressStep("images");
+      
+      if (!isAutomatic) {
+        addLog("Waiting to proceed with image generation...", "info");
+        await waitForProceed();
       }
       
-      setCurrentlyGenerating(null);
-      completeStep("images");
+      addLog("Starting image generation...", "info");
+      await generateImages(generatedScript.scenes);
+      addLog("All images generated successfully!", "success");
+      completeProgressStep("images");
+      completeWorkflowStep("images");
       
-      // Step 3: Merge Video
-      setCurrentStep("merge");
-      setIsGeneratingVideo(true);
-      addLog("Starting video merge process...", "info");
-      addLog("Converting images to video frames...", "info");
-      await new Promise(r => setTimeout(r, 1500));
-      addLog("Adding narration audio tracks...", "info");
-      await new Promise(r => setTimeout(r, 1500));
-      addLog("Concatenating video clips...", "info");
-      await new Promise(r => setTimeout(r, 2000));
-      addLog("Encoding final video (MP4, 1920x1080, 30fps)...", "info");
-      await new Promise(r => setTimeout(r, 1500));
+      // Step 3: Video Generation
+      setWorkflowStep("video");
+      setProgressStep("merge");
       
-      // Simulate video URL
-      setVideoUrl("https://www.w3schools.com/html/mov_bbb.mp4");
-      setIsGeneratingVideo(false);
+      if (!isAutomatic) {
+        addLog("Waiting to proceed with video generation...", "info");
+        await waitForProceed();
+      }
+      
+      const videoResult = await generateVideo();
+      setVideoUrl(videoResult);
       addLog("Video merged successfully!", "success");
-      completeStep("merge");
+      completeProgressStep("merge");
+      completeWorkflowStep("video");
       
-      // Step 4: Review
-      setCurrentStep("review");
+      // Final steps
+      setProgressStep("review");
       addLog("Video ready for review", "info");
       await new Promise(r => setTimeout(r, 500));
-      completeStep("review");
+      completeProgressStep("review");
       
-      // Step 5: Ready for Download
-      setCurrentStep("download");
+      setProgressStep("download");
       addLog("Video generation complete! Ready for download.", "success");
-      completeStep("download");
+      completeProgressStep("download");
       
       toast.success("Video generated successfully!", {
         description: "Your video is ready for download."
@@ -206,6 +287,7 @@ const Index = () => {
       });
     } finally {
       setIsProcessing(false);
+      setIsWaitingForProceed(false);
     }
   };
 
@@ -227,13 +309,19 @@ const Index = () => {
       
       <main className="container mx-auto px-4 pb-12">
         <ProgressTracker 
-          currentStep={currentStep} 
-          completedSteps={completedSteps} 
+          currentStep={progressStep} 
+          completedSteps={progressCompletedSteps} 
         />
         
         <InputSection 
-          onGenerate={generateVideo} 
-          isProcessing={isProcessing} 
+          onGenerate={startGeneration}
+          onProceedStep={handleProceedStep}
+          onRunAutomatic={handleRunAutomatic}
+          isProcessing={isProcessing || isWaitingForProceed}
+          currentStep={workflowStep}
+          completedSteps={workflowCompletedSteps}
+          isAutomatic={isAutomatic}
+          onToggleMode={setIsAutomatic}
         />
 
         <AnimatePresence mode="wait">
@@ -262,7 +350,6 @@ const Index = () => {
         </AnimatePresence>
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-border py-6 mt-12">
         <div className="container mx-auto px-4 text-center">
           <p className="text-sm text-muted-foreground">
