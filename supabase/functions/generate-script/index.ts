@@ -77,7 +77,7 @@ Each scene should have:
 
 IMPORTANT: Generate exactly ${sceneCount} scenes, no more, no less.`;
 
-    // model comes from request payload (or the default in req.json destructuring above)
+    // Use model from request payload (defaults to google/gemini-2.5-flash-exp:free)
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
