@@ -74,6 +74,8 @@ Each scene should have:
 2. Narration text that is engaging and educational
 3. Duration in seconds (typically 5-8 seconds per scene)`;
 
+    const model = "openai/gpt-5-mini";
+
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -81,7 +83,7 @@ Each scene should have:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "openai/gpt-5-mini",
+        model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt }
@@ -160,7 +162,7 @@ Each scene should have:
     console.log(`Script generated successfully with ${scriptData.scenes.length} scenes`);
 
     return new Response(
-      JSON.stringify(scriptData),
+      JSON.stringify({ ...scriptData, _meta: { provider: "lovable-ai-gateway", model } }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
