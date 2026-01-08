@@ -32,11 +32,11 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      console.error("LOVABLE_API_KEY is not configured");
+    const OPENROUTER_API_KEY = Deno.env.get("OPENROUTER_API_KEY");
+    if (!OPENROUTER_API_KEY) {
+      console.error("OPENROUTER_API_KEY is not configured");
       return new Response(
-        JSON.stringify({ error: "Lovable API key not configured" }),
+        JSON.stringify({ error: "OpenRouter API key not configured. Please add OPENROUTER_API_KEY to Supabase secrets." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -74,13 +74,15 @@ Each scene should have:
 2. Narration text that is engaging and educational
 3. Duration in seconds (typically 5-8 seconds per scene)`;
 
-    const model = "openai/gpt-5-mini";
+    const model = "google/gemini-2.5-flash";
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json",
+        "HTTP-Referer": "https://lovable.dev",
+        "X-Title": "The Adventurous Investor"
       },
       body: JSON.stringify({
         model,
@@ -107,7 +109,7 @@ Each scene should have:
         );
       }
       const errorText = await response.text();
-      console.error("Lovable AI error:", response.status, errorText);
+      console.error("OpenRouter API error:", response.status, errorText);
       return new Response(
         JSON.stringify({ error: "Failed to generate script", details: errorText }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -115,7 +117,7 @@ Each scene should have:
     }
 
     const data = await response.json();
-    console.log("Lovable AI response received");
+    console.log("OpenRouter response received");
 
     const textContent = data.choices?.[0]?.message?.content;
     if (!textContent) {
@@ -162,7 +164,7 @@ Each scene should have:
     console.log(`Script generated successfully with ${scriptData.scenes.length} scenes`);
 
     return new Response(
-      JSON.stringify({ ...scriptData, _meta: { provider: "lovable-ai-gateway", model } }),
+      JSON.stringify({ ...scriptData, _meta: { provider: "openrouter", model } }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
