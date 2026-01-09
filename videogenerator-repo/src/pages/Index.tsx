@@ -47,6 +47,8 @@ const Index = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [hasError, setHasError] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
   
   // Store generation options for step-by-step
   const generationOptionsRef = useRef<GenerationOptions | null>(null);
@@ -65,6 +67,8 @@ const Index = () => {
     setVideoUrl(null);
     setIsGeneratingVideo(false);
     setLogs([]);
+    setHasError(false);
+    setLastError(null);
     generationOptionsRef.current = null;
     proceedResolveRef.current = null;
   }, []);
@@ -356,6 +360,8 @@ const Index = () => {
       console.error("Generation error:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       addLog(`Error: ${errorMessage}`, "error");
+      setHasError(true);
+      setLastError(errorMessage);
       toast.error("Failed to generate video", {
         description: errorMessage
       });
@@ -375,6 +381,12 @@ const Index = () => {
       document.body.removeChild(link);
       addLog("Download started", "success");
     }
+  };
+
+  const handleRetry = (newOptions: GenerationOptions) => {
+    setHasError(false);
+    setLastError(null);
+    startGeneration(newOptions);
   };
 
   const handleDownloadImagesZip = async () => {
@@ -449,6 +461,10 @@ const Index = () => {
           isAutomatic={isAutomatic}
           onToggleMode={setIsAutomatic}
           onReset={handleReset}
+          hasError={hasError}
+          lastError={lastError}
+          onRetry={handleRetry}
+          lastOptions={generationOptionsRef.current}
         />
 
         <AnimatePresence mode="wait">
