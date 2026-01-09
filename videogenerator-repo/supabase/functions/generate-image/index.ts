@@ -1,5 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,14 +26,34 @@ serve(async (req) => {
   }
 
   try {
+    const { prompt, sceneNumber, provider, guestSessionId, scriptTitle, generationId } = await req.json();
+
+    // Initialize Supabase client
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        global: {
+          headers: { Authorization: req.headers.get('Authorization')! },
+        },
+      }
+    );
+
+    // Check if user is authenticated
+    let userId: string | null = null;
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      userId = user?.id || null;
+    } catch (authError) {
+      console.log('No authenticated user, proceeding as guest');
+    }
+
     const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY');
     const HUGGINGFACE_API_KEY = Deno.env.get('HUGGINGFACE_API_KEY');
     const IMAGEGEN_API_URL = Deno.env.get('IMAGEGEN_API_URL') || 'https://freeimagegen.arb-avikroy.workers.dev';
     const IMAGEGEN_API_KEY = Deno.env.get('IMAGEGEN_API_KEY');
 
     console.log(`Env check - OPENROUTER_API_KEY: ${OPENROUTER_API_KEY ? 'present' : 'missing'}, HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY ? 'present' : 'missing'}, IMAGEGEN_API_URL: ${IMAGEGEN_API_URL}`);
-
-    const { prompt, sceneNumber, provider } = await req.json();
 
     if (!prompt) {
       throw new Error('Prompt is required');
@@ -68,6 +89,42 @@ serve(async (req) => {
         const base64 = arrayBufferToBase64(arrayBuffer);
         const imageMime = contentType && contentType.includes('png') ? 'image/png' : 'image/jpeg';
         const imageUrl = `data:${imageMime};base64,${base64}`;
+
+        // Save to database - append to images array
+        if (generationId && (userId || guestSessionId)) {
+          try {
+            // First fetch the current images array
+            const { data: currentGen } = await supabaseClient
+              .from('generations')
+              .select('images')
+              .eq('id', generationId)
+              .single();
+
+            const currentImages = currentGen?.images || [];
+            const newImage = {
+              sceneNumber,
+              url: imageUrl,
+              prompt,
+              provider: providerNormalized
+            };
+
+            // Append new image
+            const { error: dbError } = await supabaseClient
+              .from('generations')
+              .update({
+                images: [...currentImages, newImage]
+              })
+              .eq('id', generationId);
+
+            if (dbError) {
+              console.error('Error updating images in database:', dbError);
+            } else {
+              console.log('Image added to generation:', generationId);
+            }
+          } catch (dbError) {
+            console.error('Database update error:', dbError);
+          }
+        }
 
         return new Response(JSON.stringify({ success: true, imageUrl, sceneNumber }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       } catch (err) {
@@ -115,6 +172,42 @@ serve(async (req) => {
 
         const imageUrl = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`;
         console.log('Hugging Face produced an image (b64_json)');
+
+        // Save to database - append to images array
+        if (generationId && (userId || guestSessionId)) {
+          try {
+            // First fetch the current images array
+            const { data: currentGen } = await supabaseClient
+              .from('generations')
+              .select('images')
+              .eq('id', generationId)
+              .single();
+
+            const currentImages = currentGen?.images || [];
+            const newImage = {
+              sceneNumber,
+              url: imageUrl,
+              prompt,
+              provider: providerNormalized
+            };
+
+            // Append new image
+            const { error: dbError } = await supabaseClient
+              .from('generations')
+              .update({
+                images: [...currentImages, newImage]
+              })
+              .eq('id', generationId);
+
+            if (dbError) {
+              console.error('Error updating images in database:', dbError);
+            } else {
+              console.log('Image added to generation:', generationId);
+            }
+          } catch (dbError) {
+            console.error('Database update error:', dbError);
+          }
+        }
 
         return new Response(JSON.stringify({ success: true, imageUrl, sceneNumber }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       } catch (err) {
@@ -168,6 +261,42 @@ serve(async (req) => {
     if (!imageData) {
       console.error("No image in response:", JSON.stringify(data));
       throw new Error("No image generated in response");
+    }
+
+    // Save to database if user is authenticated or in guest mode
+    if ((userId || guestSessionId) && imageData) {
+      try {
+        // First fetch the current images array
+        const { data: currentGen } = await supabaseClient
+          .from('generations')
+          .select('images')
+          .eq('id', generationId)
+          .single();
+
+        const currentImages = currentGen?.images || [];
+        const newImage = {
+          sceneNumber,
+          url: imageData,
+          prompt,
+          provider: providerNormalized
+        };
+
+        // Append new image
+        const { error: dbError } = await supabaseClient
+          .from('generations')
+          .update({
+            images: [...currentImages, newImage]
+          })
+          .eq('id', generationId);
+
+        if (dbError) {
+          console.error('Error updating images in database:', dbError);
+        } else {
+          console.log('Image added to generation:', generationId);
+        }
+      } catch (dbError) {
+        console.error('Database update error:', dbError);
+      }
     }
 
     return new Response(

@@ -19,7 +19,12 @@ export interface GenerationOptions {
   sceneDuration: number;
   model: string;
   imageProvider?: string;
+  videoModel?: string;
+  aspectRatio?: string;
+  resolution?: string;
 }
+
+export type GenerationStage = 'script' | 'image' | 'video' | null;
 
 interface InputSectionProps {
   onGenerate: (options: GenerationOptions) => void;
@@ -34,12 +39,14 @@ interface InputSectionProps {
   onReset: () => void;
   hasError?: boolean;
   lastError?: string | null;
+  failedStage?: GenerationStage;
   onRetry?: (options: GenerationOptions) => void;
+  onRetryVideo?: () => void;
   lastOptions?: GenerationOptions | null;
 }
 
-export const InputSection = ({ 
-  onGenerate, 
+export const InputSection = ({
+  onGenerate,
   onProceedStep,
   onRunAutomatic,
   isProcessing,
@@ -51,74 +58,80 @@ export const InputSection = ({
   onReset,
   hasError = false,
   lastError = null,
+  failedStage = null,
   onRetry,
+  onRetryVideo,
   lastOptions,
 }: InputSectionProps) => {
   const [topic, setTopic] = useState(lastOptions?.topic || "");
   const [sceneCount, setSceneCount] = useState(lastOptions?.sceneCount.toString() || "6");
-  const [sceneDuration, setSceneDuration] = useState(lastOptions?.sceneDuration.toString() || "5");
+  const [sceneDuration, setSceneDuration] = useState(lastOptions?.sceneDuration.toString() || "4");
   const [selectedModel, setSelectedModel] = useState(lastOptions?.model || "google/gemini-2.5-flash-exp:free");
   const [selectedProvider, setSelectedProvider] = useState(lastOptions?.imageProvider || "imagegen");
+  const [aspectRatio, setAspectRatio] = useState(lastOptions?.aspectRatio || "16:9");
+  const [resolution, setResolution] = useState(lastOptions?.resolution || "1080p");
+  const [retryModel, setRetryModel] = useState("");
+  const [retryProvider, setRetryProvider] = useState("");
 
   const randomTopics = [
     "Why Most Startups Fail in Their First Year",
-  "AI Tools That Can Replace an Entire Team",
-  "How Algorithms Control What You See Online",
-  "The Dark Side of Hustle Culture",
-  "How Billionaires Actually Think About Money",
-  "The Psychology Behind Viral Content",
-  "Why Minimalism Is Making a Comeback",
-  "Future Jobs That Don’t Exist Yet",
-  "How Tech Addiction Is Rewiring Our Brains",
-  "The Truth About Passive Income",
-  "Why Time Is More Valuable Than Money",
-  "How Side Hustles Turn Into Full-Time Businesses",
-  "The Rise of Creator-Owned Platforms",
-  "What Happens When Cash Completely Disappears",
-  "How Branding Shapes Your Identity Online",
-  "The Real Cost of Free Apps",
-  "Why Attention Is the New Currency",
-  "How Small Habits Create Massive Life Changes",
-  "The Science Behind Decision Making",
-  "Why Consistency Beats Talent Every Time",
-  "How AI Is Changing Everyday Life",
-  "Why Most People Stay Broke Without Realizing It",
-  "The Hidden Business Model of Social Media",
-  "How to Build Wealth Without a High Salary",
-  "Why Motivation Is Overrated",
-  "The Future of Work After Automation",
-  "How Fear Controls Human Decisions",
-  "Why Comfort Zones Kill Growth",
-  "The Rise of Personal Brands",
-  "What Schools Don’t Teach About Money",
-  "How Trends Are Manufactured Online",
-  "Why Discipline Beats Motivation",
-  "The Loneliness Epidemic in the Digital Age",
-  "How Technology Shapes Human Behavior",
-  "Why Long-Term Thinking Is Rare",
-  "The Economics of Influencer Marketing",
-  "How Sleep Affects Success",
-  "Why Simplicity Wins in Business",
-  "The Myth of Overnight Success",
-  "How Data Is Becoming the New Oil",
-  "Why Focus Is a Superpower",
-  "How Small Decisions Compound Over Time",
-  "The Evolution of Online Communities",
-  "Why Most Goals Fail",
-  "How AI Personal Assistants Will Change Life",
-  "The Future of Money and Digital Payments",
-  "Why People Follow Trends Blindly",
-  "How Curiosity Drives Innovation",
-  "The Hidden Cost of Convenience",
-  "Why Thinking Alone Is Becoming Rare",
-  "How Technology Is Redefining Privacy",
-  "The Science of Building Habits",
-  "Why Deep Work Is Disappearing",
-  "How Automation Creates New Opportunities",
-  "The Power of Saying No",
-  "Why Attention Spans Are Shrinking",
-  "How Ideas Spread Faster Than Ever",
-  "The Real Meaning of Financial Freedom",
+    "AI Tools That Can Replace an Entire Team",
+    "How Algorithms Control What You See Online",
+    "The Dark Side of Hustle Culture",
+    "How Billionaires Actually Think About Money",
+    "The Psychology Behind Viral Content",
+    "Why Minimalism Is Making a Comeback",
+    "Future Jobs That Don’t Exist Yet",
+    "How Tech Addiction Is Rewiring Our Brains",
+    "The Truth About Passive Income",
+    "Why Time Is More Valuable Than Money",
+    "How Side Hustles Turn Into Full-Time Businesses",
+    "The Rise of Creator-Owned Platforms",
+    "What Happens When Cash Completely Disappears",
+    "How Branding Shapes Your Identity Online",
+    "The Real Cost of Free Apps",
+    "Why Attention Is the New Currency",
+    "How Small Habits Create Massive Life Changes",
+    "The Science Behind Decision Making",
+    "Why Consistency Beats Talent Every Time",
+    "How AI Is Changing Everyday Life",
+    "Why Most People Stay Broke Without Realizing It",
+    "The Hidden Business Model of Social Media",
+    "How to Build Wealth Without a High Salary",
+    "Why Motivation Is Overrated",
+    "The Future of Work After Automation",
+    "How Fear Controls Human Decisions",
+    "Why Comfort Zones Kill Growth",
+    "The Rise of Personal Brands",
+    "What Schools Don’t Teach About Money",
+    "How Trends Are Manufactured Online",
+    "Why Discipline Beats Motivation",
+    "The Loneliness Epidemic in the Digital Age",
+    "How Technology Shapes Human Behavior",
+    "Why Long-Term Thinking Is Rare",
+    "The Economics of Influencer Marketing",
+    "How Sleep Affects Success",
+    "Why Simplicity Wins in Business",
+    "The Myth of Overnight Success",
+    "How Data Is Becoming the New Oil",
+    "Why Focus Is a Superpower",
+    "How Small Decisions Compound Over Time",
+    "The Evolution of Online Communities",
+    "Why Most Goals Fail",
+    "How AI Personal Assistants Will Change Life",
+    "The Future of Money and Digital Payments",
+    "Why People Follow Trends Blindly",
+    "How Curiosity Drives Innovation",
+    "The Hidden Cost of Convenience",
+    "Why Thinking Alone Is Becoming Rare",
+    "How Technology Is Redefining Privacy",
+    "The Science of Building Habits",
+    "Why Deep Work Is Disappearing",
+    "How Automation Creates New Opportunities",
+    "The Power of Saying No",
+    "Why Attention Spans Are Shrinking",
+    "How Ideas Spread Faster Than Ever",
+    "The Real Meaning of Financial Freedom",
     "The Future of AI in Investing",
     "Sustainable Energy Solutions for Tomorrow",
     "The Rise of Digital Nomads in 2026",
@@ -158,9 +171,15 @@ export const InputSection = ({
         topic: topic.trim(),
         sceneCount: parseInt(sceneCount),
         sceneDuration: parseInt(sceneDuration),
-        model: selectedModel,
-        imageProvider: selectedProvider
+        model: failedStage === 'script' && retryModel ? retryModel : selectedModel,
+        imageProvider: failedStage === 'image' && retryProvider ? retryProvider : selectedProvider,
+        aspectRatio,
+        resolution
       });
+      
+      // Reset retry selections
+      setRetryModel("");
+      setRetryProvider("");
     }
   };
 
@@ -171,7 +190,9 @@ export const InputSection = ({
         sceneCount: parseInt(sceneCount),
         sceneDuration: parseInt(sceneDuration),
         model: selectedModel,
-        imageProvider: selectedProvider
+        imageProvider: selectedProvider,
+        aspectRatio,
+        resolution
       });
     } else {
       onProceedStep();
@@ -185,14 +206,16 @@ export const InputSection = ({
         sceneCount: parseInt(sceneCount),
         sceneDuration: parseInt(sceneDuration),
         model: selectedModel,
-        imageProvider: selectedProvider
+        imageProvider: selectedProvider,
+        aspectRatio,
+        resolution
       });
       onRunAutomatic();
     }
   };
 
   return (
-    <motion.section 
+    <motion.section
       className="w-full px-4 py-8"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
@@ -227,7 +250,7 @@ export const InputSection = ({
           </div>
 
           {/* Model Selector */}
-          <ModelSelector 
+          <ModelSelector
             selectedModel={selectedModel}
             onModelChange={setSelectedModel}
             disabled={isInputDisabled}
@@ -239,9 +262,9 @@ export const InputSection = ({
               <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
                 Number of Scenes
               </label>
-              <Select 
-                value={sceneCount} 
-                onValueChange={setSceneCount} 
+              <Select
+                value={sceneCount}
+                onValueChange={setSceneCount}
                 disabled={isInputDisabled}
               >
                 <SelectTrigger className="w-full bg-secondary border-2 border-border">
@@ -260,16 +283,16 @@ export const InputSection = ({
               <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
                 Scene Duration
               </label>
-              <Select 
-                value={sceneDuration} 
-                onValueChange={setSceneDuration} 
+              <Select
+                value={sceneDuration}
+                onValueChange={setSceneDuration}
                 disabled={isInputDisabled}
               >
                 <SelectTrigger className="w-full bg-secondary border-2 border-border">
                   <SelectValue placeholder="Select duration" />
                 </SelectTrigger>
                 <SelectContent>
-                  {[3, 4, 5, 6, 7, 8, 10].map((sec) => (
+                  {[4, 6, 8].map((sec) => (
                     <SelectItem key={sec} value={sec.toString()}>
                       {sec} seconds
                     </SelectItem>
@@ -282,7 +305,7 @@ export const InputSection = ({
               <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
                 Image Provider
               </label>
-              <Select 
+              <Select
                 value={selectedProvider}
                 onValueChange={setSelectedProvider}
                 disabled={isInputDisabled}
@@ -299,6 +322,47 @@ export const InputSection = ({
               </Select>
             </div>
           </div>
+
+          {/* Video Generation Options */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                Aspect Ratio
+              </label>
+              <Select
+                value={aspectRatio}
+                onValueChange={setAspectRatio}
+                disabled={isInputDisabled}
+              >
+                <SelectTrigger className="w-full bg-secondary border-2 border-border">
+                  <SelectValue placeholder="Select aspect ratio" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="16:9">16:9 (Landscape)</SelectItem>
+                  <SelectItem value="9:16">9:16 (Portrait)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                Resolution
+              </label>
+              <Select
+                value={resolution}
+                onValueChange={setResolution}
+                disabled={isInputDisabled}
+              >
+                <SelectTrigger className="w-full bg-secondary border-2 border-border">
+                  <SelectValue placeholder="Select resolution" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1080p">1080p (Full HD)</SelectItem>
+                  <SelectItem value="720p">720p (HD)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </div>
 
         {/* Error Retry Section */}
@@ -308,24 +372,80 @@ export const InputSection = ({
             <AlertTitle>Generation Failed</AlertTitle>
             <AlertDescription className="mt-2 space-y-3">
               <p className="text-sm">{lastError}</p>
+              
+              {/* Model selector for failed stage */}
+              {failedStage === 'script' && (
+                <div className="mt-3">
+                  <label className="block text-sm font-medium mb-2">Choose Different Script AI Model:</label>
+                  <ModelSelector
+                    selectedModel={retryModel || selectedModel}
+                    onModelChange={setRetryModel}
+                    disabled={false}
+                  />
+                </div>
+              )}
+              
+              {failedStage === 'image' && (
+                <div className="mt-3">
+                  <label className="block text-sm font-medium mb-2">Choose Different Image Provider:</label>
+                  <Select
+                    value={retryProvider || selectedProvider}
+                    onValueChange={setRetryProvider}
+                  >
+                    <SelectTrigger className="w-full bg-secondary border-2 border-border">
+                      <SelectValue placeholder="Select provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="imagegen">ImageGen.AI (Fast, Good Quality)</SelectItem>
+                      <SelectItem value="huggingface">Hugging Face (Free, Slower)</SelectItem>
+                      <SelectItem value="openrouter">OpenRouter (Best Quality)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              
               <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleRetry}
-                  disabled={!canProceed || isProcessing}
-                  className="gap-2"
-                >
-                  <RotateCw className="w-4 h-4" />
-                  Retry with Different Model
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onReset}
-                >
-                  Start Fresh
-                </Button>
+                {failedStage === 'video' ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onRetryVideo}
+                      disabled={isProcessing}
+                      className="gap-2"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                      Retry Video Generation
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onReset}
+                    >
+                      Start Fresh
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRetry}
+                      disabled={!canProceed || isProcessing}
+                      className="gap-2"
+                    >
+                      <RotateCw className="w-4 h-4" />
+                      Retry with {failedStage === 'script' ? 'Different Model' : failedStage === 'image' ? 'Different Provider' : 'Changes'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onReset}
+                    >
+                      Start Fresh
+                    </Button>
+                  </>
+                )}
               </div>
             </AlertDescription>
           </Alert>

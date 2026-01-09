@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 
-export type WorkflowStep = "model" | "script" | "images" | "video";
+export type WorkflowStep = "model" | "script" | "narration" | "images" | "video";
 
 interface WorkflowControlsProps {
   currentStep: WorkflowStep;
@@ -22,6 +22,7 @@ interface WorkflowControlsProps {
 const WORKFLOW_STEPS: { id: WorkflowStep; label: string }[] = [
   { id: "model", label: "Model Selection" },
   { id: "script", label: "Script Generation" },
+  { id: "narration", label: "Narration Generation" },
   { id: "images", label: "Image Generation" },
   { id: "video", label: "Video Generation" },
 ];
@@ -41,8 +42,17 @@ export const WorkflowControls = ({
   const hasStarted = completedSteps.length > 0 || isProcessing || isWaitingForProceed;
   const isWorkflowActive = isProcessing || isWaitingForProceed;
   
-  // In manual mode: button enabled when waiting for proceed OR at model step with valid input
-  const canProceedManual = !isAutomatic && (isWaitingForProceed || (currentStep === "model" && canProceed && !isProcessing));
+  // In manual mode: button enabled when:
+  // 1. At model step with valid input
+  // 2. At narration step and narration is completed
+  // 3. At images step and images are completed
+  // 4. Waiting for proceed at any step
+  const canProceedManual = !isAutomatic && (
+    (currentStep === "model" && canProceed && !isProcessing) ||
+    (currentStep === "narration" && completedSteps.includes("narration") && !isProcessing) ||
+    (currentStep === "images" && completedSteps.includes("images") && !isProcessing) ||
+    isWaitingForProceed
+  );
   
   // In automatic mode: button enabled only at model step with valid input and not already running
   const canRunAutomatic = isAutomatic && currentStep === "model" && canProceed && !isProcessing && !isWaitingForProceed;

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,7 +24,27 @@ serve(async (req) => {
   }
 
   try {
-    const { topic, sceneCount = 6, sceneDuration = 5, model = "google/gemini-2.5-flash-exp:free" } = await req.json();
+    const { topic, sceneCount = 6, sceneDuration = 5, model = "google/gemini-2.5-flash-exp:free", guestSessionId } = await req.json();
+
+    // Initialize Supabase client
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        global: {
+          headers: { Authorization: req.headers.get('Authorization')! },
+        },
+      }
+    );
+
+    // Check if user is authenticated (optional for this function)
+    let userId: string | null = null;
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser();
+      userId = user?.id || null;
+    } catch (authError) {
+      console.log('No authenticated user, proceeding as guest');
+    }
 
     if (!topic || typeof topic !== "string") {
       return new Response(
@@ -71,7 +92,7 @@ Respond ONLY with valid JSON in this exact format:
 Topic: ${topic}
 
 Each scene should have:
-1. A detailed visual description for AI image generation (be specific about colors, composition, elements)
+1. A detailed visual description for AI image generation (be specific about colors, composition, elements). Do not add any text on the same.
 2. Narration text that is engaging and educational
 3. Duration of ${sceneDuration} seconds per scene
 
@@ -166,8 +187,46 @@ IMPORTANT: Generate exactly ${sceneCount} scenes, no more, no less.`;
 
     console.log(`Script generated successfully with ${scriptData.scenes.length} scenes`);
 
+    // Save to database - create new generation row
+    let generationId: string | null = null;
+    if (userId || guestSessionId) {
+      try {
+        const { data, error: dbError } = await supabaseClient
+          .from('generations')
+          .insert({
+            user_id: userId,
+            guest_session_id: userId ? null : guestSessionId,
+            title: scriptData.title,
+            topic,
+            script: scriptData,
+            metadata: {
+              model,
+              provider: 'openrouter',
+              sceneCount,
+              sceneDuration,
+              topic
+            }
+          })
+          .select('id')
+          .single();
+
+        if (dbError) {
+          console.error('Error saving script to database:', dbError);
+        } else {
+          generationId = data?.id;
+          console.log('Script saved to database with ID:', generationId);
+        }
+      } catch (dbError) {
+        console.error('Database save error:', dbError);
+      }
+    }
+
     return new Response(
-      JSON.stringify({ ...scriptData, _meta: { provider: "openrouter", model, requestedScenes: sceneCount, requestedDuration: sceneDuration } }),
+      JSON.stringify({ 
+        ...scriptData, 
+        generationId,
+        _meta: { provider: "openrouter", model, requestedScenes: sceneCount, requestedDuration: sceneDuration } 
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 

@@ -9,7 +9,7 @@ max_rows = 1000
 
 [db]
 port = 54322
-major_version = 15
+major_version = 17
 
 [studio]
 enabled = true
@@ -34,3 +34,13 @@ verify_jwt = false
 
 [functions.generate-image]
 verify_jwt = false
+
+[functions.migrate-guest-data]
+verify_jwt = true
+
+[functions.cleanup-guest-data]
+verify_jwt = false
+# Note: Cron scheduling is configured in Supabase Dashboard
+# Navigate to Edge Functions > cleanup-guest-data > Settings > Cron Schedule
+# Set to: 0 2 * * * (daily at 2 AM UTC)
+

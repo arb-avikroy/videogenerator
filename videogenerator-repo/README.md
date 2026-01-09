@@ -74,6 +74,83 @@ Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/c
 
 ---
 
+## 🎙️ Text-to-Speech Integration
+
+The video generator now supports **5 TTS options** for high-quality narration audio:
+
+### Quick Setup (Recommended: Google Cloud TTS)
+
+1. **Enable Google Cloud Text-to-Speech API**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Enable [Text-to-Speech API](https://console.cloud.google.com/apis/library/texttospeech.googleapis.com)
+
+2. **Create API Key**
+   - Go to [Credentials](https://console.cloud.google.com/apis/credentials)
+   - Create Credentials → API Key
+   - Copy the key (starts with `AIza...`)
+
+3. **Configure Supabase**
+   ```bash
+   npx supabase secrets set GOOGLE_CLOUD_TTS_API_KEY=AIzaSy...your-key
+   npx supabase functions deploy generate-narration
+   ```
+
+### TTS Priority System
+
+The system tries services in this order:
+
+1. **Google Cloud TTS** (if `GOOGLE_CLOUD_TTS_API_KEY` is set) ⭐ **Recommended**
+   - Cost: $16/1M characters (1M free/month)
+   - Quality: ⭐⭐⭐⭐⭐
+   - 380+ voices, 40+ languages
+
+2. **Chatterbox TTS** (if `CHATTERBOX_TTS_URL` is set)
+   - Cost: Free (self-hosted)
+   - Quality: ⭐⭐⭐⭐⭐
+   - Custom voices, 23+ languages
+
+3. **OpenAI TTS** (if `OPENAI_API_KEY` is set)
+   - Cost: $15/1M characters
+   - Quality: ⭐⭐⭐⭐
+   - 6 voices, fast generation
+
+4. **ElevenLabs** (if `ELEVENLABS_API_KEY` is set)
+   - Cost: Free tier (10k chars/month)
+   - Quality: ⭐⭐⭐⭐⭐
+   - 1000+ voices, voice cloning
+
+5. **Browser TTS** (always available)
+   - Cost: Free
+   - Quality: ⭐⭐⭐
+   - No setup needed
+
+### Detailed Setup Guides
+
+- 📖 **Google Cloud TTS:** See `GOOGLE_CLOUD_TTS_SETUP.md`
+- 📖 **Chatterbox TTS:** See `CHATTERBOX_SETUP.md` or `python-tts-service/QUICKSTART.md`
+- 📖 **Quick Reference:** See `TTS_QUICK_REFERENCE.md`
+- 📖 **Architecture:** See `TTS_ARCHITECTURE.md`
+
+### TTS Environment Variables
+
+Set in Supabase secrets:
+
+```bash
+# Google Cloud TTS (Recommended)
+npx supabase secrets set GOOGLE_CLOUD_TTS_API_KEY=AIza...
+
+# Chatterbox TTS (Python service URL)
+npx supabase secrets set CHATTERBOX_TTS_URL=https://your-service.railway.app
+
+# OpenAI TTS
+npx supabase secrets set OPENAI_API_KEY=sk-proj-...
+
+# ElevenLabs
+npx supabase secrets set ELEVENLABS_API_KEY=...
+```
+
+---
+
 ## Hugging Face image generation integration 🔧
 
 You can use Hugging Face for image generation by configuring an environment variable for the Supabase Edge Function:

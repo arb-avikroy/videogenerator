@@ -1,10 +1,15 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+const VERTEX_AI_API_KEY = Deno.env.get('GOOGLE_VERTEX_AI_KEY') ?? '';
+const PROJECT_ID = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') ?? 'adventurousinvestorgauth';
+const LOCATION = "us-central1";
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,181 +17,190 @@ serve(async (req) => {
   }
 
   try {
-    const HUGGINGFACE_API_KEY = Deno.env.get('HUGGINGFACE_API_KEY');
-
-    console.log(`Env check - HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY ? 'present' : 'missing'}`);
-
     const body = await req.json();
     console.log('Request body received:', JSON.stringify(body));
 
-    const { scenes } = body;
+    const { scenes, guestSessionId, scriptTitle, generationId, aspectRatio = "16:9", resolution = "1080p" } = body;
+
+    // Initialize Supabase client
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    );
+
+    // Check if user is authenticated
+    let userId: string | null = null;
+    try {
+      const authHeader = req.headers.get('Authorization');
+      if (authHeader) {
+        const token = authHeader.replace('Bearer ', '');
+        const { data: { user } } = await supabaseClient.auth.getUser(token);
+        userId = user?.id || null;
+      }
+    } catch (authError) {
+      console.log('No authenticated user, proceeding as guest');
+    }
+
     console.log('Scenes extracted:', Array.isArray(scenes), scenes?.length);
 
     if (!Array.isArray(scenes) || scenes.length === 0) {
       throw new Error(`Request must include a non-empty array of scenes. Received: ${JSON.stringify(body)}`);
     }
 
-    // Parse global parameters and provide safe defaults and clamps. Callers can pass `parameters` at the root
-    // or per-scene as `scene.parameters` to override values for that scene.
-    const globalParams = (body.parameters && typeof body.parameters === 'object') ? body.parameters : {};
-
-    const clampInt = (v: number, min: number, max: number) => Math.max(min, Math.min(max, Math.floor(Number(v) || 0)));
-    const clampFloat = (v: number, min: number, max: number) => Math.max(min, Math.min(max, Number(v)));
-
-    const DEFAULTS = {
-      num_inference_steps: 25,
-      num_frames: 14,
-      height: 576,
-      width: 1024,
-      guidance_scale: 7.5,
-      seed: null,
-      max_frames: 60,
-      max_height: 768,
-      max_width: 1280,
+    // Parse resolution to dimensions
+    const resolutionMap: { [key: string]: { width: number; height: number } } = {
+      "1080p": aspectRatio === "16:9" ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 },
+      "720p": aspectRatio === "16:9" ? { width: 1280, height: 720 } : { width: 720, height: 1280 },
     };
 
-    const resolvedGlobalParams = {
-      num_inference_steps: clamp(Number(globalParams.num_inference_steps ?? DEFAULTS.num_inference_steps), 1, 50),
-      num_frames: clamp(Number(globalParams.num_frames ?? DEFAULTS.num_frames), 1, DEFAULTS.max_frames),
-      height: clamp(Number(globalParams.height ?? DEFAULTS.height), 128, DEFAULTS.max_height),
-      width: clamp(Number(globalParams.width ?? DEFAULTS.width), 128, DEFAULTS.max_width),
-      guidance_scale: Number(globalParams.guidance_scale ?? DEFAULTS.guidance_scale),
-      seed: globalParams.seed ?? DEFAULTS.seed,
-    };
+    const dimensions = resolutionMap[resolution] || resolutionMap["1080p"];
 
-    console.log('Resolved global parameters:', JSON.stringify(resolvedGlobalParams));
-
-    // For each scene, call HF Stable Video Diffusion image->video endpoint and a TTS endpoint to produce audio
+    // For each scene, call Vertex AI Veo 3.1 to generate video from image
     const results: Array<{ sceneNumber: number; video?: string; audio?: string; error?: string }> = [];
 
     for (const scene of scenes) {
       const sceneNumber = scene.sceneNumber ?? null;
       try {
-        if (!scene.image && !scene.imageUrl) {
-          throw new Error('Scene missing image data');
+        if (!scene.imageUrl) {
+          throw new Error('Scene missing imageUrl');
         }
 
-        const imageUrl = scene.imageUrl || scene.image; // data URL or url
-        const narration = scene.narration || '';
+        const imageUrl = scene.imageUrl;
+        const duration = scene.duration || 4; // Default to 4 seconds
+        const audioUrl = scene.audioUrl || null;
 
-        // Merge parameters: global -> scene override
-        const sceneParamsRaw = (scene.parameters && typeof scene.parameters === 'object') ? scene.parameters : {};
-        const sceneParams = {
-          num_inference_steps: clampInt(sceneParamsRaw.num_inference_steps ?? resolvedGlobalParams.num_inference_steps, 1, 50),
-          num_frames: clampInt(sceneParamsRaw.num_frames ?? resolvedGlobalParams.num_frames, 1, DEFAULTS.max_frames),
-          height: clampInt(sceneParamsRaw.height ?? resolvedGlobalParams.height, 128, DEFAULTS.max_height),
-          width: clampInt(sceneParamsRaw.width ?? resolvedGlobalParams.width, 128, DEFAULTS.max_width),
-          guidance_scale: clampFloat(sceneParamsRaw.guidance_scale ?? resolvedGlobalParams.guidance_scale, 0, 30),
-          seed: sceneParamsRaw.seed ?? resolvedGlobalParams.seed,
-        };
+        console.log(`Generating video for scene ${sceneNumber} with Vertex AI Veo 3.1...`);
 
-        // Call Hugging Face Stable Video Diffusion endpoint
-        if (!HUGGINGFACE_API_KEY) {
-          throw new Error('HUGGINGFACE_API_KEY not configured');
+        // Call Vertex AI Veo 3.1 API using API Key (for testing/development)
+        // Note: For production, use service account OAuth2
+        const vertexResponse = await fetch(
+          `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/veo-3.1-fast:streamGenerateVideo?key=${VERTEX_AI_API_KEY}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              instances: [{
+                prompt: scene.visualDescription || "Animate this image",
+                image: {
+                  bytesBase64Encoded: imageUrl.startsWith('data:') 
+                    ? imageUrl.split(',')[1]
+                    : await imageToBase64(imageUrl)
+                },
+                parameters: {
+                  duration: duration,
+                  aspectRatio: aspectRatio,
+                  resolution: {
+                    width: dimensions.width,
+                    height: dimensions.height
+                  }
+                }
+              }]
+            }),
+          }
+        );
+
+        if (!vertexResponse.ok) {
+          const errorText = await vertexResponse.text();
+          throw new Error(`Vertex AI error: ${errorText}`);
         }
 
-        console.log(`Generating video for scene ${sceneNumber} via Stable Video Diffusion...`);
+        const vertexData = await vertexResponse.json();
+        
+        // Extract video data from response
+        let videoBase64 = vertexData.predictions?.[0]?.videoBytes;
+        
+        if (!videoBase64) {
+          throw new Error('No video generated from Vertex AI');
+        }
 
-        console.log(`Scene ${sceneNumber} parameters:`, JSON.stringify(sceneParams));
+        // Convert base64 to blob
+        const videoBytes = Uint8Array.from(atob(videoBase64), c => c.charCodeAt(0));
+        
+        // Upload video to Supabase Storage
+        const videoFileName = `${generationId}/videos/scene_${sceneNumber}.mp4`;
+        const { error: uploadError } = await supabaseClient.storage
+          .from('generated-content')
+          .upload(videoFileName, videoBytes, {
+            contentType: 'video/mp4',
+            upsert: true,
+          });
 
-        const svdPayload: any = {
-          inputs: imageUrl,
-          parameters: sceneParams
-        };
+        if (uploadError) {
+          throw new Error(`Failed to upload video: ${uploadError.message}`);
+        }
 
-        const svdResp = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-video-diffusion-img2vid', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(svdPayload)
+        // Get public URL
+        const { data: urlData } = supabaseClient.storage
+          .from('generated-content')
+          .getPublicUrl(videoFileName);
+
+        console.log(`Video generated and uploaded for scene ${sceneNumber}`);
+
+        results.push({
+          sceneNumber,
+          video: urlData.publicUrl,
+          audio: audioUrl,
         });
 
-        if (!svdResp.ok) {
-          const txt = await svdResp.text();
-          console.error('SVD video generation error:', svdResp.status, txt);
-          throw new Error(`SVD video generation failed: ${svdResp.status} - ${txt}`);
-        }
-
-        const ct = svdResp.headers.get('content-type') || '';
-        let videoDataUrl: string | undefined = undefined;
-
-        if (ct.includes('application/json')) {
-          // JSON response with base64 video
-          const json = await svdResp.json();
-          if (json?.b64_json) {
-            videoDataUrl = `data:video/mp4;base64,${json.b64_json}`;
-          } else if (json?.video_url) {
-            const vfetch = await fetch(json.video_url);
-            if (vfetch.ok) {
-              const vab = await vfetch.arrayBuffer();
-              const vbytes = new Uint8Array(vab);
-              const vb64 = btoa(String.fromCharCode(...vbytes));
-              videoDataUrl = `data:video/mp4;base64,${vb64}`;
-            }
-          }
-        } else if (ct.includes('video') || ct.includes('octet-stream')) {
-          // Binary video response
-          const videoBuf = await svdResp.arrayBuffer();
-          const videoBytes = new Uint8Array(videoBuf);
-          const videoB64 = btoa(String.fromCharCode(...videoBytes));
-          videoDataUrl = `data:video/mp4;base64,${videoB64}`;
-        }
-
-        if (!videoDataUrl) {
-          console.error('No video returned from SVD:', JSON.stringify(await svdResp.clone().json().catch(() => ({}))));
-          throw new Error('No video generated by Stable Video Diffusion');
-        }
-
-        // TTS (attempt HF TTS). Fallback: no audio
-        let audioDataUrl: string | undefined = undefined;
-        if (narration && narration.trim().length > 0) {
-          try {
-            console.log(`Generating TTS for scene ${sceneNumber}...`);
-            const ttsResp = await fetch('https://router.huggingface.co/models/espnet/kan-bayashi_ljspeech_vits', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ inputs: narration })
-            });
-
-            if (ttsResp.ok) {
-              const tct = ttsResp.headers.get('content-type') || '';
-              if (tct.includes('audio') || tct.includes('application/octet-stream')) {
-                const ab = await ttsResp.arrayBuffer();
-                const bytes = new Uint8Array(ab);
-                const b64 = btoa(String.fromCharCode(...bytes));
-                const ext = tct.includes('wav') ? 'wav' : (tct.includes('mpeg') || tct.includes('mp3') ? 'mp3' : 'wav');
-                audioDataUrl = `data:audio/${ext};base64,${b64}`;
-              } else {
-                const tjs = await ttsResp.json();
-                const maybe = tjs?.b64 || tjs?.data?.[0]?.b64 || tjs?.audio || tjs?.b64_audio;
-                if (maybe) audioDataUrl = maybe.startsWith('data:') ? maybe : `data:audio/wav;base64,${maybe}`;
-              }
-            } else {
-              const tt = await ttsResp.text();
-              console.warn('TTS request failed:', ttsResp.status, tt);
-            }
-          } catch (e) {
-            console.warn('TTS generation error:', String(e));
-          }
-        }
-
-        results.push({ sceneNumber, video: videoDataUrl, audio: audioDataUrl });
-      } catch (err) {
-        console.error('Scene error:', err);
-        const msg = err instanceof Error ? err.message : String(err);
-        results.push({ sceneNumber: scene.sceneNumber ?? -1, error: msg });
+      } catch (sceneError) {
+        const errMsg = sceneError instanceof Error ? sceneError.message : String(sceneError);
+        console.error(`Scene ${sceneNumber} error:`, errMsg);
+        results.push({
+          sceneNumber,
+          error: errMsg,
+        });
       }
     }
 
-    return new Response(JSON.stringify({ success: true, scenes: results }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('Error in generate-video function:', errorMessage);
-    return new Response(JSON.stringify({ success: false, error: errorMessage }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    // Save generation to database
+    if (generationId) {
+      try {
+        const { error: dbError } = await supabaseClient
+          .from('generations')
+          .update({
+            video_scenes: results,
+            status: 'videos_generated',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', generationId);
+
+        if (dbError) {
+          console.error('Database update error:', dbError);
+        }
+      } catch (dbErr) {
+        console.error('Database operation failed:', dbErr);
+      }
+    }
+
+    return new Response(JSON.stringify({ results }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    });
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('generate-video error:', message);
+    return new Response(
+      JSON.stringify({ error: message }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 500,
+      }
+    );
   }
 });
+
+// Helper function to convert image URL to base64
+async function imageToBase64(imageUrl: string): Promise<string> {
+  const response = await fetch(imageUrl);
+  const blob = await response.blob();
+  const arrayBuffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}

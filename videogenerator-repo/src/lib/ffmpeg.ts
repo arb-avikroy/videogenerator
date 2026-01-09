@@ -86,3 +86,77 @@ export async function mergeScenesToMp4(scenes: Array<{ videoDataUrl: string; aud
 
   return url;
 }
+
+export async function mergeVideosWithAudioMixing(scenes: Array<{ videoUrl: string; narrationUrl?: string; filenameBase: string }>) {
+  if (!ffmpeg.isLoaded()) {
+    await ffmpeg.load();
+  }
+
+  // Process each scene: mix video audio (40%) with narration (100%)
+  const outFiles: string[] = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const { videoUrl, narrationUrl, filenameBase } = scenes[i];
+    const videoName = `${filenameBase}_video_${i}.mp4`;
+    const narrationName = `${filenameBase}_narration_${i}.mp3`;
+    const outName = `${filenameBase}_mixed_${i}.mp4`;
+
+    // Write video
+    const videoRes = await fetch(videoUrl);
+    const videoBuf = await videoRes.arrayBuffer();
+    ffmpeg.FS('writeFile', videoName, new Uint8Array(videoBuf));
+
+    if (narrationUrl) {
+      // Write narration audio
+      const narrationRes = await fetch(narrationUrl);
+      const narrationBuf = await narrationRes.arrayBuffer();
+      ffmpeg.FS('writeFile', narrationName, new Uint8Array(narrationBuf));
+
+      // Mix audio: video audio at 40% (0.4) + narration at 100% (1.0)
+      // Extract video audio, adjust volume, then mix with narration
+      await ffmpeg.run(
+        '-i', videoName,
+        '-i', narrationName,
+        '-filter_complex', '[0:a]volume=0.4[a1];[1:a]volume=1.0[a2];[a1][a2]amix=inputs=2:duration=longest[aout]',
+        '-map', '0:v',
+        '-map', '[aout]',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-shortest',
+        '-y', outName
+      );
+    } else {
+      // No narration, just copy video with reduced audio
+      await ffmpeg.run(
+        '-i', videoName,
+        '-filter:a', 'volume=0.4',
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-y', outName
+      );
+    }
+
+    outFiles.push(outName);
+  }
+
+  // Create concat file
+  const concatList = outFiles.map((f) => `file '${f}'`).join('\n');
+  ffmpeg.FS('writeFile', 'concat.txt', concatList);
+
+  // Concatenate all mixed videos
+  await ffmpeg.run('-f', 'concat', '-safe', '0', '-i', 'concat.txt', '-c', 'copy', '-y', 'final_mixed.mp4');
+
+  const data = ffmpeg.FS('readFile', 'final_mixed.mp4');
+  const blob = new Blob([data.buffer], { type: 'video/mp4' });
+  const url = URL.createObjectURL(blob);
+
+  // Cleanup files
+  try {
+    outFiles.forEach((f) => ffmpeg.FS('unlink', f));
+    ffmpeg.FS('unlink', 'concat.txt');
+    ffmpeg.FS('unlink', 'final_mixed.mp4');
+  } catch (e) {
+    // ignore cleanup errors
+  }
+
+  return url;
+}

@@ -1,8 +1,8 @@
 import { motion } from "framer-motion";
-import { FileText, Image, Film, Eye, Download, Check } from "lucide-react";
+import { FileText, Image, Film, Eye, Download, Check, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export type Step = "script" | "images" | "merge" | "review" | "download";
+export type Step = "script" | "images" | "narration" | "merge" | "review" | "download";
 
 interface ProgressTrackerProps {
   currentStep: Step;
@@ -11,6 +11,7 @@ interface ProgressTrackerProps {
 
 const steps: { id: Step; label: string; icon: React.ElementType }[] = [
   { id: "script", label: "Generate Script", icon: FileText },
+  { id: "narration", label: "Generate Narration", icon: Volume2 },
   { id: "images", label: "Generate Images", icon: Image },
   { id: "merge", label: "Merge Video", icon: Film },
   { id: "review", label: "Review", icon: Eye },
