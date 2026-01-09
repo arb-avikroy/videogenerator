@@ -16,6 +16,7 @@ export interface GenerationOptions {
   sceneCount: number;
   sceneDuration: number;
   model: string;
+  imageProvider?: string;
 }
 
 interface InputSectionProps {
@@ -47,6 +48,7 @@ export const InputSection = ({
   const [sceneCount, setSceneCount] = useState("6");
   const [sceneDuration, setSceneDuration] = useState("5");
   const [selectedModel, setSelectedModel] = useState("google/gemini-2.5-flash-exp:free");
+  const [selectedProvider, setSelectedProvider] = useState("imagegen");
 
   const isModelStepComplete = completedSteps.includes("model");
   const isInputDisabled = isProcessing || isWaitingForProceed || isModelStepComplete;
@@ -59,6 +61,7 @@ export const InputSection = ({
         sceneCount: parseInt(sceneCount),
         sceneDuration: parseInt(sceneDuration),
         model: selectedModel,
+        imageProvider: selectedProvider
       });
     } else {
       onProceedStep();
@@ -72,6 +75,7 @@ export const InputSection = ({
         sceneCount: parseInt(sceneCount),
         sceneDuration: parseInt(sceneDuration),
         model: selectedModel,
+        imageProvider: selectedProvider
       });
       onRunAutomatic();
     }
@@ -112,7 +116,7 @@ export const InputSection = ({
           />
 
           {/* Scene Count and Duration */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
                 Number of Scenes
@@ -152,6 +156,27 @@ export const InputSection = ({
                       {sec} seconds
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
+                Image Provider
+              </label>
+              <Select 
+                value={selectedProvider}
+                onValueChange={setSelectedProvider}
+                disabled={isInputDisabled}
+              >
+                <SelectTrigger className="w-full bg-secondary border-2 border-border">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="imagegen">ImageGen (Free API)</SelectItem>
+                  <SelectItem value="huggingface">Hugging Face</SelectItem>
+                  <SelectItem value="openrouter">OpenRouter</SelectItem>
+                  <SelectItem value="none">No Provider (Demo) - client-only</SelectItem>
                 </SelectContent>
               </Select>
             </div>

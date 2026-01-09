@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
-import { Image, Loader2 } from "lucide-react";
+import { Image, Loader2, Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface Scene {
   sceneNumber: number;
@@ -13,9 +14,11 @@ interface ScenesPanelProps {
   scenes: Scene[];
   isLoading: boolean;
   currentlyGenerating: number | null;
+  onDownloadZip: () => void;
+  canDownload: boolean;
 }
 
-export const ScenesPanel = ({ scenes, isLoading, currentlyGenerating }: ScenesPanelProps) => {
+export const ScenesPanel = ({ scenes, isLoading, currentlyGenerating, onDownloadZip, canDownload }: ScenesPanelProps) => {
   return (
     <motion.div 
       className="panel h-full min-h-80 p-5 flex flex-col"
@@ -23,9 +26,21 @@ export const ScenesPanel = ({ scenes, isLoading, currentlyGenerating }: ScenesPa
       animate={{ opacity: 1, scale: 1 }}
       transition={{ delay: 0.15 }}
     >
-      <div className="flex items-center gap-2 mb-4">
-        <Image className="w-4 h-4 text-primary" />
-        <span className="panel-header mb-0">Generated Scenes</span>
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <div className="flex items-center gap-2">
+          <Image className="w-4 h-4 text-primary" />
+          <span className="panel-header mb-0">Generated Scenes</span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-2"
+          onClick={onDownloadZip}
+          disabled={!canDownload || isLoading}
+        >
+          <Download className="w-4 h-4" />
+          Download .zip
+        </Button>
       </div>
 
       <div className="flex-1 overflow-auto scrollbar-thin space-y-3">

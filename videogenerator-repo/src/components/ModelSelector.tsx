@@ -28,7 +28,7 @@ export const ModelSelector = ({ selectedModel, onModelChange, disabled }: ModelS
   return (
     <div>
       <label className="block text-sm font-medium text-muted-foreground mb-2 uppercase tracking-wider">
-        AI Model (Free Models Only)
+        Script AI Model (Free Models Only. Choose another if one doesn't work)
       </label>
       <Select value={selectedModel} onValueChange={onModelChange} disabled={disabled || isLoading}>
         <SelectTrigger className="w-full bg-secondary border-2 border-border">

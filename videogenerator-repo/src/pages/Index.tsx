@@ -143,10 +143,11 @@ const Index = () => {
     );
 
     if (scriptError) {
-      const anyErr = scriptError as any;
-      const body = anyErr?.context?.body;
+      type ScriptError = { message?: string; context?: { body?: unknown } };
+      const scriptErr = scriptError as ScriptError;
+      const body = scriptErr?.context?.body;
 
-      let message = scriptError.message || "Failed to generate script";
+      let message = scriptErr?.message || "Failed to generate script";
       if (body) {
         if (typeof body === "string") {
           try {
@@ -156,7 +157,9 @@ const Index = () => {
             // ignore
           }
         } else if (typeof body === "object") {
-          message = body?.error || body?.message || message;
+          const b = body as Record<string, unknown>;
+          if (typeof b.error === 'string') message = b.error;
+          else if (typeof b.message === 'string') message = b.message;
         }
       }
 
@@ -188,7 +191,8 @@ const Index = () => {
         const { data, error } = await supabase.functions.invoke('generate-image', {
           body: {
             prompt: `Create a high-quality, cinematic image for a video scene: ${scene.visualDescription}. Style: Professional, visually striking, suitable for video content.`,
-            sceneNumber: scene.sceneNumber
+            sceneNumber: scene.sceneNumber,
+            provider: generationOptionsRef.current?.imageProvider
           }
         });
 
@@ -219,20 +223,58 @@ const Index = () => {
     return updatedScenes;
   };
 
-  const generateVideo = async (): Promise<string> => {
+  const generateVideo = async (videoScenes: Scene[]): Promise<string> => {
     setIsGeneratingVideo(true);
-    addLog("Starting video merge process...", "info");
-    addLog("Converting images to video frames...", "info");
-    await new Promise(r => setTimeout(r, 1500));
-    addLog("Adding narration audio tracks...", "info");
-    await new Promise(r => setTimeout(r, 1500));
-    addLog("Concatenating video clips...", "info");
-    await new Promise(r => setTimeout(r, 2000));
-    addLog("Encoding final video (MP4, 1920x1080, 30fps)...", "info");
-    await new Promise(r => setTimeout(r, 1500));
-    
-    setIsGeneratingVideo(false);
-    return "https://www.w3schools.com/html/mov_bbb.mp4";
+    addLog("Requesting video generation for scenes...", "info");
+    addLog(`Scenes available: ${videoScenes.length}`, 'info');
+
+    try {
+      if (!videoScenes || videoScenes.length === 0) {
+        throw new Error('No scenes available for video generation');
+      }
+
+      const requestScenes = videoScenes.map(s => ({ sceneNumber: s.sceneNumber, imageUrl: s.imageUrl, prompt: s.visualDescription, narration: s.narration }));
+      addLog(`Sending ${requestScenes.length} scenes to backend...`, 'info');
+
+      const { data, error } = await supabase.functions.invoke('generate-video', { body: { scenes: requestScenes, provider: generationOptionsRef.current?.imageProvider } });
+
+      if (error) throw new Error(error.message || 'Failed to call generate-video');
+      if (!data || !data.success) throw new Error(data?.error || 'Video generation function failed');
+
+      addLog('Received video pieces from backend. Merging with ffmpeg...', 'info');
+
+      // Prepare inputs for ffmpeg helper
+      const sceneMediaRaw = data.scenes;
+
+      // Dynamic import of ffmpeg helper (to avoid loading during app start)
+      const { mergeScenesToMp4, createVideoFromImage } = await import('@/lib/ffmpeg');
+
+      const sceneMedia: Array<{ videoDataUrl: string; audioDataUrl?: string; filenameBase: string }> = [];
+
+      for (let i = 0; i < sceneMediaRaw.length; i++) {
+        const s = sceneMediaRaw[i];
+        if (s.error || !s.video) {
+          // Fallback: create short video from original image (client-side)
+          addLog(`Scene ${s.sceneNumber || i + 1}: server generation failed, creating placeholder clip locally`, 'warning');
+          const imageSource = videoScenes[i]?.imageUrl || videoScenes[i]?.image || videoScenes[i]?.imageUrl;
+          const placeholderVideoUrl = imageSource ? await createVideoFromImage(imageSource, videoScenes[i]?.duration || 3, `fallback_${i}`) : '';
+          sceneMedia.push({ videoDataUrl: placeholderVideoUrl, audioDataUrl: s.audio, filenameBase: `scene_${i}` });
+        } else {
+          sceneMedia.push({ videoDataUrl: s.video, audioDataUrl: s.audio, filenameBase: `scene_${i}` });
+        }
+      }
+
+      const finalUrl = await mergeScenesToMp4(sceneMedia);
+
+      addLog('Video merged successfully', 'success');
+      setIsGeneratingVideo(false);
+      return finalUrl;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Video generation failed: ${msg}`, 'error');
+      setIsGeneratingVideo(false);
+      throw err;
+    }
   };
 
   const startGeneration = async (options: GenerationOptions) => {
@@ -275,7 +317,8 @@ const Index = () => {
       }
       
       addLog("Starting image generation...", "info");
-      await generateImages(generatedScript.scenes);
+      const scenesWithImages = await generateImages(generatedScript.scenes);
+      setScenes(scenesWithImages);
       addLog("All images generated successfully!", "success");
       completeProgressStep("images");
       completeWorkflowStep("images");
@@ -289,7 +332,7 @@ const Index = () => {
         await waitForProceed();
       }
       
-      const videoResult = await generateVideo();
+      const videoResult = await generateVideo(scenesWithImages);
       setVideoUrl(videoResult);
       addLog("Video merged successfully!", "success");
       completeProgressStep("merge");
@@ -334,6 +377,57 @@ const Index = () => {
     }
   };
 
+  const handleDownloadImagesZip = async () => {
+    try {
+      const scenesWithImages = scenes.filter((s) => s.imageUrl);
+      if (scenesWithImages.length === 0) {
+        toast.error("No images to download yet.");
+        return;
+      }
+
+      addLog("Preparing images zip...", "info");
+
+      const JSZip = (await import("https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm")).default;
+      const zip = new JSZip();
+
+      const toBlob = async (url: string) => {
+        if (url.startsWith("data:")) {
+          const [meta, data] = url.split(",");
+          const isBase64 = meta.includes("base64");
+          const bytes = isBase64 ? Uint8Array.from(atob(data), (c) => c.charCodeAt(0)) : new TextEncoder().encode(data);
+          const mime = meta.split(":")[1]?.split(";")[0] || "image/png";
+          return new Blob([bytes], { type: mime });
+        }
+        const resp = await fetch(url);
+        const buf = await resp.arrayBuffer();
+        const mime = resp.headers.get("content-type") || "image/png";
+        return new Blob([buf], { type: mime });
+      };
+
+      for (const scene of scenesWithImages) {
+        const blob = await toBlob(scene.imageUrl!);
+        const filename = `scene-${scene.sceneNumber || scenesWithImages.indexOf(scene) + 1}.png`;
+        zip.file(filename, blob);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${script?.title?.toLowerCase().replace(/\s+/g, "-") || "scenes"}-images.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addLog("Images zip download started", "success");
+      toast.success("Images zip ready");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addLog(`Failed to download images zip: ${msg}`, "error");
+      toast.error("Could not create images zip", { description: msg });
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background mountain-pattern">
       <Header />
@@ -372,6 +466,8 @@ const Index = () => {
               scenes={scenes} 
               isLoading={isProcessing && scenes.length === 0}
               currentlyGenerating={currentlyGenerating}
+              onDownloadZip={handleDownloadImagesZip}
+              canDownload={scenes.some((s) => !!s.imageUrl)}
             />
             <VideoPreview 
               videoUrl={videoUrl}
