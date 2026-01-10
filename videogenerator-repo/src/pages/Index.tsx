@@ -576,8 +576,7 @@ const Index = () => {
           resolution: options.resolution || '1080p',
           generationId: genId,
           guestSessionId: isGuest ? guestSessionId : undefined
-        },
-        headers: user ? { Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` } : {}
+        }
       });
 
       if (error) throw new Error(error.message || 'Failed to call generate-video');

@@ -7,9 +7,19 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const VERTEX_AI_API_KEY = Deno.env.get('GOOGLE_VERTEX_AI_KEY') ?? '';
-const PROJECT_ID = Deno.env.get('GOOGLE_CLOUD_PROJECT_ID') ?? 'adventurousinvestorgauth';
+const PROJECT_ID = "adventurousinvestorgauth";
 const LOCATION = "us-central1";
+
+// Rate limiting configuration
+const CONCURRENT_REQUESTS = 2;
+const DELAY_BETWEEN_BATCHES = 2000;
+
+// Workload Identity Federation configuration
+const WIF_PROVIDER = Deno.env.get('GCP_WIF_PROVIDER') ?? '';
+const WIF_SERVICE_ACCOUNT = Deno.env.get('GCP_WIF_SERVICE_ACCOUNT') ?? '';
+
+// Token caching
+let cachedToken: { token: string; expiresAt: number } | null = null;
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -22,135 +32,60 @@ serve(async (req) => {
 
     const { scenes, guestSessionId, scriptTitle, generationId, aspectRatio = "16:9", resolution = "1080p" } = body;
 
-    // Initialize Supabase client
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
 
-    // Check if user is authenticated
     let userId: string | null = null;
+    let supabaseToken: string | null = null;
+    
     try {
       const authHeader = req.headers.get('Authorization');
       if (authHeader) {
-        const token = authHeader.replace('Bearer ', '');
-        const { data: { user } } = await supabaseClient.auth.getUser(token);
+        supabaseToken = authHeader.replace('Bearer ', '');
+        const { data: { user } } = await supabaseClient.auth.getUser(supabaseToken);
         userId = user?.id || null;
       }
     } catch (authError) {
       console.log('No authenticated user, proceeding as guest');
     }
 
-    console.log('Scenes extracted:', Array.isArray(scenes), scenes?.length);
-
     if (!Array.isArray(scenes) || scenes.length === 0) {
-      throw new Error(`Request must include a non-empty array of scenes. Received: ${JSON.stringify(body)}`);
+      throw new Error(`Request must include a non-empty array of scenes`);
     }
 
-    // Parse resolution to dimensions
-    const resolutionMap: { [key: string]: { width: number; height: number } } = {
-      "1080p": aspectRatio === "16:9" ? { width: 1920, height: 1080 } : { width: 1080, height: 1920 },
-      "720p": aspectRatio === "16:9" ? { width: 1280, height: 720 } : { width: 720, height: 1280 },
-    };
+    // Get GCP access token once and cache it
+    const accessToken = await getGCPAccessTokenViaWIF(supabaseToken);
 
-    const dimensions = resolutionMap[resolution] || resolutionMap["1080p"];
-
-    // For each scene, call Vertex AI Veo 3.1 to generate video from image
+    // Process scenes in batches to avoid rate limits
     const results: Array<{ sceneNumber: number; video?: string; audio?: string; error?: string }> = [];
-
-    for (const scene of scenes) {
-      const sceneNumber = scene.sceneNumber ?? null;
-      try {
-        if (!scene.imageUrl) {
-          throw new Error('Scene missing imageUrl');
-        }
-
-        const imageUrl = scene.imageUrl;
-        const duration = scene.duration || 4; // Default to 4 seconds
-        const audioUrl = scene.audioUrl || null;
-
-        console.log(`Generating video for scene ${sceneNumber} with Vertex AI Veo 3.1...`);
-
-        // Call Vertex AI Veo 3.1 API using API Key (for testing/development)
-        // Note: For production, use service account OAuth2
-        const vertexResponse = await fetch(
-          `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/veo-3.1-fast:streamGenerateVideo?key=${VERTEX_AI_API_KEY}`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              instances: [{
-                prompt: scene.visualDescription || "Animate this image",
-                image: {
-                  bytesBase64Encoded: imageUrl.startsWith('data:') 
-                    ? imageUrl.split(',')[1]
-                    : await imageToBase64(imageUrl)
-                },
-                parameters: {
-                  duration: duration,
-                  aspectRatio: aspectRatio,
-                  resolution: {
-                    width: dimensions.width,
-                    height: dimensions.height
-                  }
-                }
-              }]
-            }),
-          }
-        );
-
-        if (!vertexResponse.ok) {
-          const errorText = await vertexResponse.text();
-          throw new Error(`Vertex AI error: ${errorText}`);
-        }
-
-        const vertexData = await vertexResponse.json();
-        
-        // Extract video data from response
-        let videoBase64 = vertexData.predictions?.[0]?.videoBytes;
-        
-        if (!videoBase64) {
-          throw new Error('No video generated from Vertex AI');
-        }
-
-        // Convert base64 to blob
-        const videoBytes = Uint8Array.from(atob(videoBase64), c => c.charCodeAt(0));
-        
-        // Upload video to Supabase Storage
-        const videoFileName = `${generationId}/videos/scene_${sceneNumber}.mp4`;
-        const { error: uploadError } = await supabaseClient.storage
-          .from('generated-content')
-          .upload(videoFileName, videoBytes, {
-            contentType: 'video/mp4',
-            upsert: true,
+    
+    for (let i = 0; i < scenes.length; i += CONCURRENT_REQUESTS) {
+      const batch = scenes.slice(i, i + CONCURRENT_REQUESTS);
+      console.log(`Processing batch ${Math.floor(i / CONCURRENT_REQUESTS) + 1} of ${Math.ceil(scenes.length / CONCURRENT_REQUESTS)}`);
+      
+      const batchPromises = batch.map(scene => 
+        processScene(scene, accessToken, aspectRatio, resolution, supabaseClient, generationId)
+      );
+      
+      const batchResults = await Promise.allSettled(batchPromises);
+      
+      batchResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          results.push(result.value);
+        } else {
+          const sceneNumber = batch[index].sceneNumber ?? null;
+          results.push({
+            sceneNumber,
+            error: result.reason?.message || 'Unknown error',
           });
-
-        if (uploadError) {
-          throw new Error(`Failed to upload video: ${uploadError.message}`);
         }
-
-        // Get public URL
-        const { data: urlData } = supabaseClient.storage
-          .from('generated-content')
-          .getPublicUrl(videoFileName);
-
-        console.log(`Video generated and uploaded for scene ${sceneNumber}`);
-
-        results.push({
-          sceneNumber,
-          video: urlData.publicUrl,
-          audio: audioUrl,
-        });
-
-      } catch (sceneError) {
-        const errMsg = sceneError instanceof Error ? sceneError.message : String(sceneError);
-        console.error(`Scene ${sceneNumber} error:`, errMsg);
-        results.push({
-          sceneNumber,
-          error: errMsg,
-        });
+      });
+      
+      if (i + CONCURRENT_REQUESTS < scenes.length) {
+        console.log(`Waiting ${DELAY_BETWEEN_BATCHES}ms before next batch...`);
+        await delay(DELAY_BETWEEN_BATCHES);
       }
     }
 
@@ -192,7 +127,263 @@ serve(async (req) => {
   }
 });
 
-// Helper function to convert image URL to base64
+async function processScene(
+  scene: any,
+  accessToken: string,
+  aspectRatio: string,
+  resolution: string,
+  supabaseClient: any,
+  generationId: string
+): Promise<{ sceneNumber: number; video?: string; audio?: string; error?: string }> {
+  const sceneNumber = scene.sceneNumber ?? null;
+  
+  try {
+    if (!scene.imageUrl) {
+      throw new Error('Scene missing imageUrl');
+    }
+
+    const imageUrl = scene.imageUrl;
+    const duration = scene.duration || 4;
+    const audioUrl = scene.audioUrl || null;
+
+    console.log(`Generating video for scene ${sceneNumber}...`);
+    console.log(`Using model: veo-3.1-generate-001`);
+    console.log(`Endpoint: https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/veo-3.1-generate-001:predictLongRunning`);
+
+    // CORRECT endpoint: predictLongRunning (NOT streamGenerateVideo)
+    const vertexResponse = await fetchWithRetry(
+      `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/veo-3.1-generate-001:predictLongRunning`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          instances: [{
+            prompt: scene.visualDescription || "Animate this image",
+            image: {
+              bytesBase64Encoded: imageUrl.startsWith('data:') 
+                ? imageUrl.split(',')[1]
+                : await imageToBase64(imageUrl),
+              mimeType: "image/jpeg"
+            }
+          }],
+          parameters: {
+            durationSeconds: duration,
+            aspectRatio: aspectRatio,
+            resolution: resolution,
+            sampleCount: 1
+          }
+        }),
+      },
+      3
+    );
+
+    if (!vertexResponse.ok) {
+      const errorText = await vertexResponse.text();
+      throw new Error(`Vertex AI error (${vertexResponse.status}): ${errorText}`);
+    }
+
+    // Log the response for debugging
+    const responseText = await vertexResponse.text();
+    console.log(`Vertex AI Response Status: ${vertexResponse.status}`);
+    console.log(`Vertex AI Response (first 500 chars): ${responseText.substring(0, 500)}`);
+    
+    let vertexData;
+    try {
+      vertexData = JSON.parse(responseText);
+    } catch (parseError) {
+      throw new Error(`Failed to parse Vertex AI response: ${responseText.substring(0, 200)}`);
+    }
+    
+    // Get operation name
+    const operationName = vertexData.name;
+    
+    if (!operationName) {
+      throw new Error('No operation name returned from Vertex AI');
+    }
+
+    console.log(`Video generation started for scene ${sceneNumber}, operation: ${operationName}`);
+
+    // Poll for completion
+    let videoBase64;
+    let attempts = 0;
+    const maxAttempts = 60;
+    
+    while (attempts < maxAttempts) {
+      await delay(5000);
+      
+      const statusResponse = await fetch(
+        `https://${LOCATION}-aiplatform.googleapis.com/v1/${operationName}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          }
+        }
+      );
+      
+      const statusData = await statusResponse.json();
+      
+      if (statusData.done) {
+        if (statusData.error) {
+          throw new Error(`Video generation failed: ${JSON.stringify(statusData.error)}`);
+        }
+        
+        videoBase64 = statusData.response?.predictions?.[0]?.bytesBase64Encoded;
+        break;
+      }
+      
+      attempts++;
+      console.log(`Waiting for scene ${sceneNumber}... (${attempts}/${maxAttempts})`);
+    }
+    
+    if (!videoBase64) {
+      throw new Error('Video generation timeout or no video data returned');
+    }
+
+    const videoBytes = Uint8Array.from(atob(videoBase64), c => c.charCodeAt(0));
+    
+    const videoFileName = `${generationId}/videos/scene_${sceneNumber}.mp4`;
+    const { error: uploadError } = await supabaseClient.storage
+      .from('generated-content')
+      .upload(videoFileName, videoBytes, {
+        contentType: 'video/mp4',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Failed to upload video: ${uploadError.message}`);
+    }
+
+    const { data: urlData } = supabaseClient.storage
+      .from('generated-content')
+      .getPublicUrl(videoFileName);
+
+    console.log(`✓ Scene ${sceneNumber} completed`);
+
+    return {
+      sceneNumber,
+      video: urlData.publicUrl,
+      audio: audioUrl,
+    };
+
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error(`✗ Scene ${sceneNumber} failed:`, errMsg);
+    throw error;
+  }
+}
+
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      if (response.status === 429) {
+        const retryAfter = parseInt(response.headers.get('Retry-After') || '5');
+        console.log(`Rate limited. Waiting ${retryAfter}s before retry ${attempt + 1}/${maxRetries}...`);
+        await delay(retryAfter * 1000);
+        continue;
+      }
+      
+      if (response.status >= 500) {
+        const backoffTime = Math.min(1000 * Math.pow(2, attempt), 10000);
+        console.log(`Server error. Retrying in ${backoffTime}ms (attempt ${attempt + 1}/${maxRetries})...`);
+        await delay(backoffTime);
+        continue;
+      }
+      
+      return response;
+      
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const backoffTime = Math.min(1000 * Math.pow(2, attempt), 10000);
+      console.log(`Request failed. Retrying in ${backoffTime}ms (attempt ${attempt + 1}/${maxRetries})...`);
+      await delay(backoffTime);
+    }
+  }
+  
+  throw lastError || new Error('Max retries exceeded');
+}
+
+async function getGCPAccessTokenViaWIF(supabaseToken: string | null): Promise<string> {
+  if (cachedToken && cachedToken.expiresAt > Date.now()) {
+    console.log('Using cached GCP token');
+    return cachedToken.token;
+  }
+
+  if (!WIF_PROVIDER || !WIF_SERVICE_ACCOUNT) {
+    throw new Error('Workload Identity Federation not configured');
+  }
+
+  let subjectToken = supabaseToken;
+  
+  if (!subjectToken) {
+    console.log('No user token, using service role key for WIF');
+    subjectToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+  }
+
+  const stsResponse = await fetch('https://sts.googleapis.com/v1/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      audience: `//iam.googleapis.com/${WIF_PROVIDER}`,
+      scope: 'https://www.googleapis.com/auth/cloud-platform',
+      requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+      subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+      subject_token: subjectToken,
+    }),
+  });
+
+  if (!stsResponse.ok) {
+    const errorText = await stsResponse.text();
+    throw new Error(`STS token exchange failed: ${errorText}`);
+  }
+
+  const stsData = await stsResponse.json();
+  const federatedToken = stsData.access_token;
+
+  const impersonateResponse = await fetch(
+    `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${WIF_SERVICE_ACCOUNT}:generateAccessToken`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${federatedToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        scope: ['https://www.googleapis.com/auth/cloud-platform'],
+        lifetime: '3600s',
+      }),
+    }
+  );
+
+  if (!impersonateResponse.ok) {
+    const errorText = await impersonateResponse.text();
+    throw new Error(`Service account impersonation failed: ${errorText}`);
+  }
+
+  const impersonateData = await impersonateResponse.json();
+  
+  cachedToken = {
+    token: impersonateData.accessToken,
+    expiresAt: Date.now() + (50 * 60 * 1000),
+  };
+  
+  console.log('Generated new GCP token');
+  return impersonateData.accessToken;
+}
+
 async function imageToBase64(imageUrl: string): Promise<string> {
   const response = await fetch(imageUrl);
   const blob = await response.blob();
@@ -203,4 +394,8 @@ async function imageToBase64(imageUrl: string): Promise<string> {
     binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

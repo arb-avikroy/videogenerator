@@ -24,6 +24,10 @@ jwt_expiry = 3600
 enable_signup = true
 enable_anonymous_sign_ins = false
 
+[auth.hook.custom_access_token]
+enabled = false
+uri = "pg-functions://postgres/auth/custom_access_token_hook"
+
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
@@ -33,6 +37,9 @@ enable_confirmations = false
 verify_jwt = false
 
 [functions.generate-image]
+verify_jwt = false
+
+[functions.generate-video]
 verify_jwt = false
 
 [functions.migrate-guest-data]
