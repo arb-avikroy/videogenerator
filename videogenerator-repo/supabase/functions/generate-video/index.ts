@@ -1,3 +1,5 @@
+/// <reference types="https://deno.land/x/deno@v1.30.0/cli/dts/lib.deno.d.ts" />
+
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -21,7 +23,7 @@ const WIF_SERVICE_ACCOUNT = Deno.env.get('GCP_WIF_SERVICE_ACCOUNT') ?? '';
 // Token caching
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -109,7 +111,24 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ results }), {
+    // Check if any scenes failed
+    const failedScenes = results.filter(r => r.error);
+    const successfulScenes = results.filter(r => r.video);
+
+    if (successfulScenes.length === 0) {
+      throw new Error(`All scenes failed to generate. Errors: ${failedScenes.map(s => `Scene ${s.sceneNumber}: ${s.error}`).join('; ')}`);
+    }
+
+    // Format response to match expected structure
+    return new Response(JSON.stringify({ 
+      success: true,
+      videos: successfulScenes.map(scene => ({
+        sceneNumber: scene.sceneNumber,
+        videoUrl: scene.video,
+        audioUrl: scene.audio
+      })),
+      failures: failedScenes.length > 0 ? failedScenes : undefined
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,
     });
@@ -190,11 +209,16 @@ async function processScene(
     console.log(`Vertex AI Response Status: ${vertexResponse.status}`);
     console.log(`Vertex AI Response (first 500 chars): ${responseText.substring(0, 500)}`);
     
+    // Check if response is HTML (error page)
+    if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
+      throw new Error(`Received HTML instead of JSON. This usually means an API error or rate limit. Status: ${vertexResponse.status}`);
+    }
+    
     let vertexData;
     try {
       vertexData = JSON.parse(responseText);
     } catch (parseError) {
-      throw new Error(`Failed to parse Vertex AI response: ${responseText.substring(0, 200)}`);
+      throw new Error(`Failed to parse Vertex AI response as JSON: ${responseText.substring(0, 200)}`);
     }
     
     // Get operation name
@@ -223,7 +247,24 @@ async function processScene(
         }
       );
       
-      const statusData = await statusResponse.json();
+      if (!statusResponse.ok) {
+        const errorText = await statusResponse.text();
+        throw new Error(`Status check failed (${statusResponse.status}): ${errorText}`);
+      }
+      
+      const statusText = await statusResponse.text();
+      
+      // Check for HTML response
+      if (statusText.trim().startsWith('<!DOCTYPE') || statusText.trim().startsWith('<html')) {
+        throw new Error(`Received HTML during status check. API may have rate limited or errored.`);
+      }
+      
+      let statusData;
+      try {
+        statusData = JSON.parse(statusText);
+      } catch (parseErr) {
+        throw new Error(`Failed to parse status response: ${statusText.substring(0, 200)}`);
+      }
       
       if (statusData.done) {
         if (statusData.error) {
@@ -341,7 +382,7 @@ async function getGCPAccessTokenViaWIF(supabaseToken: string | null): Promise<st
       scope: 'https://www.googleapis.com/auth/cloud-platform',
       requested_token_type: 'urn:ietf:params:oauth:token-type:access_token',
       subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
-      subject_token: subjectToken,
+      subject_token: subjectToken || '',
     }),
   });
 

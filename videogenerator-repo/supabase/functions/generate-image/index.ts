@@ -1,3 +1,5 @@
+/// <reference types="https://deno.land/x/deno@v1.30.0/cli/dts/lib.deno.d.ts" />
+
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -19,7 +21,7 @@ const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
   return btoa(binary);
 };
 
-serve(async (req) => {
+serve(async (req: Request) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });

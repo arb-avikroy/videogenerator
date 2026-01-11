@@ -1,3 +1,5 @@
+/// <reference types="https://deno.land/x/deno@v1.30.0/cli/dts/lib.deno.d.ts" />
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -13,7 +15,7 @@ interface NarrationRequest {
   voice?: string;
 }
 
-serve(async (req) => {
+serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }

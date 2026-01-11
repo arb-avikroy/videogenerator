@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
@@ -67,6 +67,11 @@ const Index = () => {
   const proceedResolveRef = useRef<(() => void) | null>(null);
 
   const handleReset = useCallback(() => {
+    // Revoke blob URL before resetting
+    if (videoUrl && videoUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(videoUrl);
+    }
+    
     setProgressStep("script");
     setProgressCompletedSteps([]);
     setWorkflowStep("model");
@@ -86,7 +91,7 @@ const Index = () => {
     setNarrationReady(false);
     generationOptionsRef.current = null;
     proceedResolveRef.current = null;
-  }, []);
+  }, [videoUrl]);
 
   const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
     const timestamp = new Date().toLocaleTimeString("en-US", { 
@@ -97,6 +102,15 @@ const Index = () => {
     });
     setLogs(prev => [...prev, { timestamp, message, type }]);
   }, []);
+
+  // Clean up blob URLs to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (videoUrl && videoUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(videoUrl);
+      }
+    };
+  }, [videoUrl]);
 
   const completeProgressStep = useCallback((step: Step) => {
     setProgressCompletedSteps(prev => [...prev, step]);
