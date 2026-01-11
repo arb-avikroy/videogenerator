@@ -229,6 +229,21 @@ async function processScene(
     }
 
     console.log(`Video generation started for scene ${sceneNumber}, operation: ${operationName}`);
+    
+    // Construct the proper operation URL
+    // Operation name format: "projects/{project}/locations/{location}/operations/{operation}"
+    // OR full path: "projects/{project}/locations/{location}/publishers/google/models/{model}/operations/{operation}"
+    let operationUrl;
+    if (operationName.startsWith('http')) {
+      operationUrl = operationName;
+    } else if (operationName.startsWith('projects/')) {
+      operationUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/${operationName}`;
+    } else {
+      // Just the operation ID
+      operationUrl = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/operations/${operationName}`;
+    }
+    
+    console.log(`Polling URL: ${operationUrl}`);
 
     // Poll for completion
     let videoBase64;
@@ -239,7 +254,7 @@ async function processScene(
       await delay(5000);
       
       const statusResponse = await fetch(
-        `https://${LOCATION}-aiplatform.googleapis.com/v1/${operationName}`,
+        operationUrl,
         {
           headers: {
             'Authorization': `Bearer ${accessToken}`,
