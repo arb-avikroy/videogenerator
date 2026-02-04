@@ -50,7 +50,7 @@ const History = () => {
       try {
         const { data, error } = await supabase
           .from("generations")
-          .select("id, title, topic, created_at, script, metadata, merged_video")
+          .select("id, title, topic, created_at, script, metadata, merged_video, images, narration_audio")
           .order("created_at", { ascending: false });
 
         if (error) throw error;
@@ -58,11 +58,11 @@ const History = () => {
         // Only update state if component is still mounted
         if (!isMounted) return;
         
-        // Map data without additional queries
+        // Use the actual images and narration_audio from database
         const generationsWithCounts = (data || []).map((gen) => ({
           ...gen,
-          images: gen.script?.scenes || [],
-          narration_audio: gen.script?.scenes || [],
+          images: gen.images || [],
+          narration_audio: gen.narration_audio || [],
           merged_video: gen.merged_video || null,
         }));
 
@@ -164,6 +164,7 @@ const History = () => {
       if (fullData.merged_video) {
         try {
           if (fullData.merged_video.startsWith("data:")) {
+            // Handle base64 data URLs
             const base64Data = fullData.merged_video.split(",")[1];
             const binaryData = atob(base64Data);
             const bytes = new Uint8Array(binaryData.length);
@@ -171,13 +172,48 @@ const History = () => {
               bytes[i] = binaryData.charCodeAt(i);
             }
             zip.file("video.mp4", bytes);
+            console.log("Video added to ZIP (base64)");
+          } else if (fullData.merged_video.includes("supabase.co/storage")) {
+            // Handle Supabase storage URLs
+            console.log("Downloading video from Supabase storage...");
+            const urlPath = fullData.merged_video.split("/storage/v1/object/public/")[1];
+            if (urlPath) {
+              const [bucket, ...pathParts] = urlPath.split("/");
+              const filePath = pathParts.join("/");
+              
+              const { data: videoData, error: downloadError } = await supabase.storage
+                .from(bucket)
+                .download(filePath);
+              
+              if (downloadError) {
+                console.error("Supabase storage download error:", downloadError);
+                throw downloadError;
+              }
+              
+              if (videoData) {
+                zip.file("video.mp4", videoData);
+                console.log("Video added to ZIP (Supabase storage)");
+              }
+            }
           } else {
-            const response = await fetch(fullData.merged_video);
+            // Handle regular URLs
+            console.log("Downloading video from URL...");
+            const response = await fetch(fullData.merged_video, {
+              mode: 'cors',
+              credentials: 'omit'
+            });
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
             const blob = await response.blob();
             zip.file("video.mp4", blob);
+            console.log("Video added to ZIP (URL)");
           }
         } catch (err) {
           console.error("Failed to download video:", err);
+          toast.warning("Video could not be added to ZIP", {
+            description: err instanceof Error ? err.message : "Unknown error"
+          });
         }
       }
 
@@ -237,8 +273,8 @@ const History = () => {
 
   const getAssetCounts = (generation: Generation) => {
     const scriptCount = generation.script ? 1 : 0;
-    const imageCount = generation.script?.scenes?.length || 0;
-    const audioCount = generation.script?.scenes?.length || 0;
+    const imageCount = generation.images?.length || 0;
+    const audioCount = generation.narration_audio?.length || 0;
     const videoCount = generation.merged_video ? 1 : 0;
     return { scriptCount, imageCount, audioCount, videoCount };
   };
