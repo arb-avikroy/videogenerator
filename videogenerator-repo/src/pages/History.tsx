@@ -48,11 +48,45 @@ const History = () => {
     try {
       const { data, error } = await supabase
         .from("generations")
-        .select("*")
+        .select("id, title, topic, created_at, script, metadata")
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setGenerations(data || []);
+      
+      // Fetch counts separately for each generation
+      const generationsWithCounts = await Promise.all(
+        (data || []).map(async (gen) => {
+          // Get images count
+          const { count: imagesCount } = await supabase
+            .from("generations")
+            .select("images", { count: "exact", head: true })
+            .eq("id", gen.id)
+            .single();
+
+          // Get audio count
+          const { count: audioCount } = await supabase
+            .from("generations")
+            .select("narration_audio", { count: "exact", head: true })
+            .eq("id", gen.id)
+            .single();
+
+          // Check if video exists
+          const { data: videoData } = await supabase
+            .from("generations")
+            .select("merged_video")
+            .eq("id", gen.id)
+            .single();
+
+          return {
+            ...gen,
+            images: gen.script?.scenes || [],
+            narration_audio: gen.script?.scenes || [],
+            merged_video: videoData?.merged_video ? "exists" : null,
+          };
+        })
+      );
+
+      setGenerations(generationsWithCounts as Generation[]);
     } catch (error) {
       console.error("Error fetching generations:", error);
       toast.error("Failed to load generation history");
@@ -64,18 +98,28 @@ const History = () => {
   const downloadGeneration = async (generation: Generation) => {
     setDownloadingId(generation.id);
     try {
+      // Fetch the full generation data including large fields
+      const { data: fullData, error } = await supabase
+        .from("generations")
+        .select("*")
+        .eq("id", generation.id)
+        .single();
+
+      if (error) throw error;
+      if (!fullData) throw new Error("Generation not found");
+
       const zip = new JSZip();
 
       // Add script as JSON
-      if (generation.script) {
-        zip.file("script.json", JSON.stringify(generation.script, null, 2));
+      if (fullData.script) {
+        zip.file("script.json", JSON.stringify(fullData.script, null, 2));
       }
 
       // Download and add images
-      if (generation.images && generation.images.length > 0) {
+      if (fullData.images && fullData.images.length > 0) {
         const imagesFolder = zip.folder("images");
-        for (let i = 0; i < generation.images.length; i++) {
-          const img = generation.images[i];
+        for (let i = 0; i < fullData.images.length; i++) {
+          const img = fullData.images[i];
           if (img.url) {
             try {
               const response = await fetch(img.url);
@@ -89,10 +133,10 @@ const History = () => {
       }
 
       // Download and add audio files
-      if (generation.narration_audio && generation.narration_audio.length > 0) {
+      if (fullData.narration_audio && fullData.narration_audio.length > 0) {
         const audioFolder = zip.folder("audio");
-        for (let i = 0; i < generation.narration_audio.length; i++) {
-          const audio = generation.narration_audio[i];
+        for (let i = 0; i < fullData.narration_audio.length; i++) {
+          const audio = fullData.narration_audio[i];
           if (audio.audioUrl) {
             try {
               // Handle base64 data URLs
@@ -117,10 +161,10 @@ const History = () => {
       }
 
       // Add video if available
-      if (generation.merged_video) {
+      if (fullData.merged_video) {
         try {
-          if (generation.merged_video.startsWith("data:")) {
-            const base64Data = generation.merged_video.split(",")[1];
+          if (fullData.merged_video.startsWith("data:")) {
+            const base64Data = fullData.merged_video.split(",")[1];
             const binaryData = atob(base64Data);
             const bytes = new Uint8Array(binaryData.length);
             for (let i = 0; i < binaryData.length; i++) {
@@ -128,7 +172,7 @@ const History = () => {
             }
             zip.file("video.mp4", bytes);
           } else {
-            const response = await fetch(generation.merged_video);
+            const response = await fetch(fullData.merged_video);
             const blob = await response.blob();
             zip.file("video.mp4", blob);
           }
@@ -183,8 +227,8 @@ const History = () => {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString("en-US", {
-      year: "numeric",
-      month: "short",
+      year: "numeric",script?.scenes?.length || 0;
+    const audioCount = generation.script?.scenes
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
