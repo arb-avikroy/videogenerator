@@ -209,15 +209,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               console.log('Cleared guest session after login');
             }
           }
-                    description: "Could not migrate guest data. Your new generations will be saved.",
-                    variant: "destructive",
-                  });
-                  localStorage.removeItem(GUEST_SESSION_KEY);
-                  setGuestSessionId(null);
-                }
-              }, 1000);
-            }
-          }
         }
       }
     );
