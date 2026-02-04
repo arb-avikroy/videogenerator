@@ -244,6 +244,35 @@ const History = () => {
 
     setDeletingId(id);
     try {
+      // First, get the generation to check if it has a video in storage
+      const generation = generations.find(g => g.id === id);
+      
+      if (generation?.merged_video && generation.merged_video.includes("supabase.co/storage")) {
+        try {
+          // Extract bucket and file path from URL
+          const urlPath = generation.merged_video.split("/storage/v1/object/public/")[1];
+          if (urlPath) {
+            const [bucket, ...pathParts] = urlPath.split("/");
+            const filePath = pathParts.join("/");
+            
+            // Delete file from storage
+            const { error: storageError } = await supabase.storage
+              .from(bucket)
+              .remove([filePath]);
+            
+            if (storageError) {
+              console.error("Storage delete error:", storageError);
+              toast.warning("Video file could not be deleted from storage");
+            } else {
+              console.log("Video deleted from storage:", filePath);
+            }
+          }
+        } catch (storageErr) {
+          console.error("Error parsing storage URL:", storageErr);
+        }
+      }
+
+      // Delete the database record
       const { error } = await supabase
         .from("generations")
         .delete()
