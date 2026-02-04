@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
@@ -47,6 +47,20 @@ const Index = () => {
   
   const generationOptionsRef = useRef<GenerationOptions | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const isMountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Clean up audio on unmount
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   const getVoiceDisplayName = () => {
     const providerName = selectedProvider === "voicerss" ? "Voice RSS" : "AIML";
@@ -106,7 +120,7 @@ const Index = () => {
   }, []);
 
   const saveGenerationToDatabase = async (script: Script, scenes: Scene[], options: GenerationOptions, genId: string | null, videoUrl?: string) => {
-    if (!user || isGuest) return; // Only save for logged-in users
+    if (!user || isGuest) return null; // Only save for logged-in users
 
     try {
       const generationData = {
@@ -143,12 +157,18 @@ const Index = () => {
 
       if (error) {
         console.error("Error saving generation:", error);
+        toast.warning("History not saved", {
+          description: "Server is unavailable. Your content can still be downloaded locally."
+        });
         return null;
       }
 
       return data?.id;
     } catch (error) {
       console.error("Save generation error:", error);
+      toast.warning("History not saved", {
+        description: "Server is unavailable. Your content can still be downloaded locally."
+      });
       return null;
     }
   };
@@ -189,6 +209,13 @@ const Index = () => {
       };
     } catch (err) {
       console.error("Script generation error:", err);
+      // Check if it's a network/server error
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('AbortError') || errorMessage.includes('NetworkError')) {
+        toast.error("Server unavailable", {
+          description: "Cannot connect to generation server. Please check your connection and try again."
+        });
+      }
       throw err;
     }
   };
@@ -200,8 +227,11 @@ const Index = () => {
     }
 
     const updatedScenes = [...scenes];
+    let hasServerError = false;
 
     for (let i = 0; i < scenes.length; i++) {
+      if (!isMountedRef.current) break; // Stop if component unmounted
+      
       const scene = scenes[i];
       setCurrentlyGenerating(i);
 
@@ -226,14 +256,29 @@ const Index = () => {
           imageUrl: data.imageUrl
         };
 
-        setScenes([...updatedScenes]);
+        if (isMountedRef.current) {
+          setScenes([...updatedScenes]);
+        }
       } catch (err) {
         console.error(`Error generating image for scene ${scene.sceneNumber}:`, err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        
+        // Check if it's a server/network error
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('AbortError') || errorMessage.includes('NetworkError')) {
+          if (!hasServerError) {
+            hasServerError = true;
+            toast.warning("Server connection issue", {
+              description: "Images may not be saved to history, but you can still download them locally."
+            });
+          }
+        }
         throw err;
       }
     }
 
-    setCurrentlyGenerating(null);
+    if (isMountedRef.current) {
+      setCurrentlyGenerating(null);
+    }
     return updatedScenes;
   };
   const generateNarration = async (scenes: Scene[], genId: string | null) => {
@@ -243,9 +288,15 @@ const Index = () => {
     }
 
     const updatedScenes = [...scenes];
-    setIsGeneratingAudio(true);
+    let hasServerError = false;
+    
+    if (isMountedRef.current) {
+      setIsGeneratingAudio(true);
+    }
 
     for (let i = 0; i < scenes.length; i++) {
+      if (!isMountedRef.current) break; // Stop if component unmounted
+      
       const scene = scenes[i];
       setCurrentlyGenerating(i);
 
@@ -270,19 +321,39 @@ const Index = () => {
           audioUrl: data.audioUrl
         };
 
-        setScenes([...updatedScenes]);
+        if (isMountedRef.current) {
+          setScenes([...updatedScenes]);
+        }
       } catch (err) {
         console.error(`Error generating audio for scene ${scene.sceneNumber}:`, err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        
+        // Check if it's a server/network error
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('AbortError') || errorMessage.includes('NetworkError')) {
+          if (!hasServerError) {
+            hasServerError = true;
+            toast.warning("Server connection issue", {
+              description: "Audio may not be saved to history, but you can still download it locally."
+            });
+          }
+        }
         throw err;
       }
     }
 
-    setCurrentlyGenerating(null);
-    setIsGeneratingAudio(false);
+    if (isMountedRef.current) {
+      setCurrentlyGenerating(null);
+      setIsGeneratingAudio(false);
 
-    // Save to database after generating narration
-    if (script && generationOptionsRef.current) {
-      await saveGenerationToDatabase(script, updatedScenes, generationOptionsRef.current, genId);
+      // Try to save to database after generating narration (non-blocking)
+      if (script && generationOptionsRef.current) {
+        try {
+          await saveGenerationToDatabase(script, updatedScenes, generationOptionsRef.current, genId);
+        } catch (err) {
+          console.error("Failed to save to database:", err);
+          // Error already shown in saveGenerationToDatabase
+        }
+      }
     }
 
     return updatedScenes;
@@ -682,8 +753,20 @@ const Index = () => {
                     scriptTitle={script.title}
                     onVideoGenerated={async (videoUrl) => {
                       if (script && generationOptionsRef.current) {
-                        await saveGenerationToDatabase(script, scenes, generationOptionsRef.current, generationId, videoUrl);
-                        toast.success("Generation saved to history!");
+                        try {
+                          const savedId = await saveGenerationToDatabase(script, scenes, generationOptionsRef.current, generationId, videoUrl);
+                          if (savedId) {
+                            toast.success("Video saved to history!");
+                          } else {
+                            toast.info("Video generated successfully!", {
+                              description: "History not saved due to server issues, but you can download it below."
+                            });
+                          }
+                        } catch (err) {
+                          toast.info("Video generated successfully!", {
+                            description: "History not saved due to server issues, but you can download it below."
+                          });
+                        }
                       }
                     }}
                   />

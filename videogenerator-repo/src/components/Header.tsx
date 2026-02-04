@@ -152,7 +152,7 @@ export const Header = ({ isProcessing = false, isWaitingForProceed = false, onRe
         {/* Tagline */}
         <div className="text-center">
           <p className="text-muted-foreground text-sm md:text-base tracking-widest uppercase">
-            AI-Powered Video Generation Platform
+            AI-Powered Content Creation Platform
           </p>
         </div>
 

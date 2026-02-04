@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
 import { Video, Download } from "lucide-react";
 import { assembleVideo } from "@/lib/videoAssembly";
+import { supabase } from "@/integrations/supabase/client";
 
 interface Scene {
   sceneNumber: number;
@@ -46,21 +47,58 @@ export const VideoGenerator = ({ scenes, scriptTitle, onVideoGenerated }: VideoG
         }
       );
 
-      // Create download URL
-      const url = URL.createObjectURL(videoBlob);
-      setVideoUrl(url);
+      // Create temporary URL for preview
+      const tempUrl = URL.createObjectURL(videoBlob);
+      setVideoUrl(tempUrl);
 
-      // Notify parent component
-      if (onVideoGenerated) {
-        onVideoGenerated(url);
+      // Upload to Supabase Storage
+      setProgressMessage("Uploading video to storage...");
+      const fileName = `${scriptTitle.replace(/\s+/g, "_")}_${Date.now()}.mp4`;
+      const filePath = `videos/${fileName}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("generated-content")
+        .upload(filePath, videoBlob, {
+          contentType: "video/mp4",
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error("Upload error:", uploadError);
+        toast.warning("Video saved locally only", {
+          description: "Could not upload to cloud storage. You can still download it."
+        });
+        // Still notify parent with temp URL for local storage
+        if (onVideoGenerated) {
+          onVideoGenerated(tempUrl);
+        }
+      } else {
+        // Get public URL
+        const { data: publicUrlData } = supabase.storage
+          .from("generated-content")
+          .getPublicUrl(filePath);
+
+        const storageUrl = publicUrlData.publicUrl;
+        
+        // Update video URL to storage URL
+        setVideoUrl(storageUrl);
+        
+        // Clean up temp URL
+        URL.revokeObjectURL(tempUrl);
+
+        // Notify parent component with storage URL
+        if (onVideoGenerated) {
+          onVideoGenerated(storageUrl);
+        }
+
+        toast.success("Video generated and saved!");
       }
-
-      toast.success("Video generated successfully!");
     } catch (error) {
       console.error("Video generation error:", error);
       toast.error("Failed to generate video");
     } finally {
       setIsGenerating(false);
+      setProgressMessage("");
     }
   };
 
@@ -85,7 +123,7 @@ export const VideoGenerator = ({ scenes, scriptTitle, onVideoGenerated }: VideoG
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <Video className="h-5 w-5" />
-            Video Generation
+            Video Generation (Do not refresh browser - Video Generation on Browser Session)
           </h3>
         </div>
 

@@ -205,22 +205,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
         
         if (session?.user) {
           setIsGuest(false);
-          updateActivity();
+          const now = Date.now();
+          setLastActivity(now);
+          localStorage.setItem(LAST_ACTIVITY_KEY, now.toString());
           
-          // Auto-migrate guest data on login
-          const guestId = localStorage.getItem(GUEST_SESSION_KEY);
-          if (guestId) {
-            setGuestSessionId(guestId);
-            // Trigger migration after a short delay to ensure session is established
-            setTimeout(() => {
-              migrateGuestData();
-            }, 1000);
+          // Auto-migrate guest data on login - only on SIGNED_IN event to prevent duplicates
+          if (event === 'SIGNED_IN') {
+            const guestId = localStorage.getItem(GUEST_SESSION_KEY);
+            if (guestId) {
+              setGuestSessionId(guestId);
+              // Trigger migration after a short delay to ensure session is established
+              setTimeout(async () => {
+                try {
+                  const { data, error } = await supabase.functions.invoke('migrate-guest-data', {
+                    body: { guestSessionId: guestId },
+                  });
+
+                  if (error) throw error;
+
+                  const migratedCount = data?.count || 0;
+                  localStorage.removeItem(GUEST_SESSION_KEY);
+                  setGuestSessionId(null);
+
+                  if (migratedCount > 0) {
+                    toast({
+                      title: "Data Migrated",
+                      description: `${migratedCount} generation(s) have been saved to your account.`,
+                    });
+                  }
+                } catch (error) {
+                  console.error('Guest data migration failed:', error);
+                  toast({
+                    title: "Migration Failed",
+                    description: "Could not migrate guest data. Your new generations will be saved.",
+                    variant: "destructive",
+                  });
+                  localStorage.removeItem(GUEST_SESSION_KEY);
+                  setGuestSessionId(null);
+                }
+              }, 1000);
+            }
           }
         }
       }
@@ -229,7 +259,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       subscription.unsubscribe();
     };
-  }, [updateActivity, migrateGuestData]);
+  }, [toast]);
 
   const value: AuthContextType = {
     user,

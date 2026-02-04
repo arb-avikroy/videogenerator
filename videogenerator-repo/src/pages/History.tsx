@@ -4,10 +4,11 @@ import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { Download, Loader2, Trash2, FileText, Image, Volume2, Video } from "lucide-react";
+import { Download, Loader2, Trash2, FileText, Image, Volume2, Video, CheckCircle2, AlertCircle } from "lucide-react";
 import JSZip from "jszip";
 import { motion } from "framer-motion";
 
@@ -31,38 +32,6 @@ const History = () => {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // Simple fetch function without useCallback
-  const fetchGenerations = async () => {
-    if (!user) {
-      setLoading(false);
-      return;
-    }
-    
-    try {
-      const { data, error } = await supabase
-        .from("generations")
-        .select("id, title, topic, created_at, script, metadata")
-        .order("created_at", { ascending: false });
-
-      if (error) throw error;
-      
-      // Map data without additional queries
-      const generationsWithCounts = (data || []).map((gen) => ({
-        ...gen,
-        images: gen.script?.scenes || [],
-        narration_audio: gen.script?.scenes || [],
-        merged_video: null,
-      }));
-
-      setGenerations(generationsWithCounts as Generation[]);
-    } catch (error) {
-      console.error("Error fetching generations:", error);
-      toast.error("Failed to load generation history");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Single useEffect to handle auth and data loading
   useEffect(() => {
     // Don't do anything if auth is still loading
@@ -74,8 +43,56 @@ const History = () => {
       return;
     }
     
+    let isMounted = true;
+    
     // Fetch generations once user is confirmed
+    const fetchGenerations = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("generations")
+          .select("id, title, topic, created_at, script, metadata, merged_video")
+          .order("created_at", { ascending: false });
+
+        if (error) throw error;
+        
+        // Only update state if component is still mounted
+        if (!isMounted) return;
+        
+        // Map data without additional queries
+        const generationsWithCounts = (data || []).map((gen) => ({
+          ...gen,
+          images: gen.script?.scenes || [],
+          narration_audio: gen.script?.scenes || [],
+          merged_video: gen.merged_video || null,
+        }));
+
+        setGenerations(generationsWithCounts as Generation[]);
+      } catch (error) {
+        if (!isMounted) return;
+        console.error("Error fetching generations:", error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        
+        // Check if it's a server/network error
+        if (errorMessage.includes('Failed to fetch') || errorMessage.includes('AbortError') || errorMessage.includes('NetworkError') || errorMessage.includes('FetchError')) {
+          toast.error("Server unavailable", {
+            description: "Cannot connect to history server. Your generated content is still available for download in the main page."
+          });
+        } else {
+          toast.error("Failed to load generation history");
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+    
     fetchGenerations();
+    
+    // Cleanup function to prevent state updates on unmounted component
+    return () => {
+      isMounted = false;
+    };
   }, [user, authLoading, navigate]);
 
   const downloadGeneration = async (generation: Generation) => {
@@ -279,7 +296,7 @@ const History = () => {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Title</TableHead>
-                        <TableHead>Topic</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead>Created</TableHead>
                         <TableHead className="text-center">Assets</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
@@ -288,10 +305,29 @@ const History = () => {
                     <TableBody>
                       {generations.map((generation) => {
                         const { scriptCount, imageCount, audioCount, videoCount } = getAssetCounts(generation);
+                        const isCompleted = videoCount > 0;
                         return (
                           <TableRow key={generation.id}>
                             <TableCell className="font-medium">{generation.title}</TableCell>
-                            <TableCell>{generation.topic || "—"}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                {isCompleted ? (
+                                  <>
+                                    <CheckCircle2 className="w-4 h-4 text-green-500" />
+                                    <Badge variant="default" className="bg-green-500/10 text-green-600 hover:bg-green-500/20">
+                                      Completed
+                                    </Badge>
+                                  </>
+                                ) : (
+                                  <>
+                                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                                    <Badge variant="default" className="bg-amber-500/10 text-amber-600 hover:bg-amber-500/20">
+                                      Incomplete
+                                    </Badge>
+                                  </>
+                                )}
+                              </div>
+                            </TableCell>
                             <TableCell className="text-muted-foreground">
                               {formatDate(generation.created_at)}
                             </TableCell>
@@ -330,6 +366,7 @@ const History = () => {
                                   disabled={downloadingId === generation.id}
                                   size="sm"
                                   variant="outline"
+                                  title="Download all assets"
                                 >
                                   {downloadingId === generation.id ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -342,6 +379,7 @@ const History = () => {
                                   disabled={deletingId === generation.id}
                                   size="sm"
                                   variant="outline"
+                                  title="Delete generation"
                                 >
                                   {deletingId === generation.id ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
