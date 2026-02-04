@@ -50,267 +50,95 @@ serve(async (req: Request) => {
       console.log('No authenticated user, proceeding as guest');
     }
 
-    const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY');
-    const HUGGINGFACE_API_KEY = Deno.env.get('HUGGINGFACE_API_KEY');
-    const IMAGEGEN_API_URL = Deno.env.get('IMAGEGEN_API_URL') || 'https://freeimagegen.arb-avikroy.workers.dev';
-    const IMAGEGEN_API_KEY = Deno.env.get('IMAGEGEN_API_KEY');
+    // Cloudflare Worker URL for image generation
+    const CLOUDFLARE_WORKER_URL = Deno.env.get('CLOUDFLARE_WORKER_URL') || 'https://freeimagegen.arb-avikroy.workers.dev';
+    const CLOUDFLARE_WORKER_KEY = Deno.env.get('CLOUDFLARE_WORKER_KEY');
 
-    console.log(`Env check - OPENROUTER_API_KEY: ${OPENROUTER_API_KEY ? 'present' : 'missing'}, HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY ? 'present' : 'missing'}, IMAGEGEN_API_URL: ${IMAGEGEN_API_URL}`);
+    console.log(`Using Cloudflare Worker: ${CLOUDFLARE_WORKER_URL}`);
 
     if (!prompt) {
       throw new Error('Prompt is required');
     }
 
-    const providerNormalized = (provider || 'imagegen').toString().toLowerCase();
-    const useImageGen = providerNormalized === 'imagegen' || providerNormalized === '' || providerNormalized === 'default';
-    const useHuggingFace = providerNormalized === 'huggingface';
-    const useOpenRouter = providerNormalized === 'openrouter';
+    console.log(`Received request - scene: ${sceneNumber}, promptPreview: ${prompt.substring(0, 200)}`);
 
-    console.log(`Received request - provider: ${providerNormalized}, scene: ${sceneNumber}, promptPreview: ${prompt.substring(0, 200)}`);
+    // Call Cloudflare Worker for image generation
+    console.log('Calling Cloudflare Worker for image generation...');
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (CLOUDFLARE_WORKER_KEY) {
+        headers['Authorization'] = `Bearer ${CLOUDFLARE_WORKER_KEY}`;
+      }
 
-    if (useImageGen) {
-      console.log('Calling ImageGen (Free API) worker...');
-      try {
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-        if (IMAGEGEN_API_KEY) headers['Authorization'] = `Bearer ${IMAGEGEN_API_KEY}`;
+      const res = await fetch(CLOUDFLARE_WORKER_URL, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ prompt })
+      });
 
-        const res = await fetch(IMAGEGEN_API_URL, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({ prompt })
-        });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.error('Cloudflare Worker API error:', res.status, errText);
+        throw new Error(`Cloudflare Worker failed: ${res.status} - ${errText}`);
+      }
 
-        if (!res.ok) {
-          const errText = await res.text();
-          console.error('ImageGen API error:', res.status, errText);
-          throw new Error(`ImageGen failed: ${res.status} - ${errText}`);
-        }
+      const contentType = res.headers.get('content-type') || '';
+      const arrayBuffer = await res.arrayBuffer();
+      const base64 = arrayBufferToBase64(arrayBuffer);
+      const imageMime = contentType && contentType.includes('png') ? 'image/png' : 'image/jpeg';
+      const imageUrl = `data:${imageMime};base64,${base64}`;
 
-        const contentType = res.headers.get('content-type') || '';
-        const arrayBuffer = await res.arrayBuffer();
-        const base64 = arrayBufferToBase64(arrayBuffer);
-        const imageMime = contentType && contentType.includes('png') ? 'image/png' : 'image/jpeg';
-        const imageUrl = `data:${imageMime};base64,${base64}`;
+      // Save to database - append to images array
+      if (generationId && (userId || guestSessionId)) {
+        try {
+          // First fetch the current images array
+          const { data: currentGen } = await supabaseClient
+            .from('generations')
+            .select('images')
+            .eq('id', generationId)
+            .single();
 
-        // Save to database - append to images array
-        if (generationId && (userId || guestSessionId)) {
-          try {
-            // First fetch the current images array
-            const { data: currentGen } = await supabaseClient
-              .from('generations')
-              .select('images')
-              .eq('id', generationId)
-              .single();
+          const currentImages = currentGen?.images || [];
+          const newImage = {
+            sceneNumber,
+            url: imageUrl,
+            prompt,
+            provider: 'cloudflare'
+          };
 
-            const currentImages = currentGen?.images || [];
-            const newImage = {
-              sceneNumber,
-              url: imageUrl,
-              prompt,
-              provider: providerNormalized
-            };
+          // Append new image
+          const { error: dbError } = await supabaseClient
+            .from('generations')
+            .update({
+              images: [...currentImages, newImage]
+            })
+            .eq('id', generationId);
 
-            // Append new image
-            const { error: dbError } = await supabaseClient
-              .from('generations')
-              .update({
-                images: [...currentImages, newImage]
-              })
-              .eq('id', generationId);
-
-            if (dbError) {
-              console.error('Error updating images in database:', dbError);
-            } else {
-              console.log('Image added to generation:', generationId);
-            }
-          } catch (dbError) {
-            console.error('Database update error:', dbError);
+          if (dbError) {
+            console.error('Error updating images in database:', dbError);
+          } else {
+            console.log('Image added to generation:', generationId);
           }
+        } catch (dbError) {
+          console.error('Database update error:', dbError);
         }
-
-        return new Response(JSON.stringify({ success: true, imageUrl, sceneNumber }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('ImageGen error:', msg);
-        throw err;
-      }
-    }
-
-    if (useHuggingFace) {
-      if (!HUGGINGFACE_API_KEY) {
-        console.error('Hugging Face called but HUGGINGFACE_API_KEY missing');
-        throw new Error('HUGGINGFACE_API_KEY is not configured');
       }
 
-      console.log('Calling Hugging Face nscale image generation API...');
-
-      try {
-        const hfRes = await fetch('https://router.huggingface.co/nscale/v1/images/generations', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${HUGGINGFACE_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            response_format: 'b64_json',
-            prompt: prompt,
-            model: 'stabilityai/stable-diffusion-xl-base-1.0'
-          })
-        });
-
-        if (!hfRes.ok) {
-          const errText = await hfRes.text();
-          console.error('Hugging Face create error:', hfRes.status, errText);
-          throw new Error(`Hugging Face failed: ${hfRes.status} - ${errText}`);
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          imageUrl,
+          sceneNumber 
+        }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
         }
-
-        const d = await hfRes.json();
-        const b64 = d?.data?.[0]?.b64_json || d?.b64_json || (Array.isArray(d) && d[0]?.b64_json) || (d?.data && d.data[0] && d.data[0].b64);
-
-        if (!b64) {
-          console.error('Unexpected Hugging Face response:', JSON.stringify(d));
-          throw new Error('No image generated by Hugging Face');
-        }
-
-        const imageUrl = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64}`;
-        console.log('Hugging Face produced an image (b64_json)');
-
-        // Save to database - append to images array
-        if (generationId && (userId || guestSessionId)) {
-          try {
-            // First fetch the current images array
-            const { data: currentGen } = await supabaseClient
-              .from('generations')
-              .select('images')
-              .eq('id', generationId)
-              .single();
-
-            const currentImages = currentGen?.images || [];
-            const newImage = {
-              sceneNumber,
-              url: imageUrl,
-              prompt,
-              provider: providerNormalized
-            };
-
-            // Append new image
-            const { error: dbError } = await supabaseClient
-              .from('generations')
-              .update({
-                images: [...currentImages, newImage]
-              })
-              .eq('id', generationId);
-
-            if (dbError) {
-              console.error('Error updating images in database:', dbError);
-            } else {
-              console.log('Image added to generation:', generationId);
-            }
-          } catch (dbError) {
-            console.error('Database update error:', dbError);
-          }
-        }
-
-        return new Response(JSON.stringify({ success: true, imageUrl, sceneNumber }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('Hugging Face error:', msg);
-        throw err;
-      }
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Cloudflare Worker error:', msg);
+      throw new Error(`Image generation failed: ${msg}`);
     }
-
-    if (!useOpenRouter) {
-      throw new Error('Image generation failed: no provider succeeded');
-    }
-
-    if (!OPENROUTER_API_KEY) {
-      throw new Error('OPENROUTER_API_KEY is not configured for fallback');
-    }
-
-    // OpenRouter (explicitly requested)
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://lovable.dev",
-        "X-Title": "Lovable Video Generator"
-      },
-      body: JSON.stringify({
-        model: "bytedance-seed/seedream-4.5",
-        messages: [
-          {
-            role: "user",
-            content: prompt
-          }
-        ],
-        modalities: ["image", "text"]
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenRouter API error:", errorText);
-      throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    console.log("OpenRouter response received");
-
-    // Extract image from response
-    const imageData = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-    
-    if (!imageData) {
-      console.error("No image in response:", JSON.stringify(data));
-      throw new Error("No image generated in response");
-    }
-
-    // Save to database if user is authenticated or in guest mode
-    if ((userId || guestSessionId) && imageData) {
-      try {
-        // First fetch the current images array
-        const { data: currentGen } = await supabaseClient
-          .from('generations')
-          .select('images')
-          .eq('id', generationId)
-          .single();
-
-        const currentImages = currentGen?.images || [];
-        const newImage = {
-          sceneNumber,
-          url: imageData,
-          prompt,
-          provider: providerNormalized
-        };
-
-        // Append new image
-        const { error: dbError } = await supabaseClient
-          .from('generations')
-          .update({
-            images: [...currentImages, newImage]
-          })
-          .eq('id', generationId);
-
-        if (dbError) {
-          console.error('Error updating images in database:', dbError);
-        } else {
-          console.log('Image added to generation:', generationId);
-        }
-      } catch (dbError) {
-        console.error('Database update error:', dbError);
-      }
-    }
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        imageUrl: imageData,
-        sceneNumber 
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    );
 
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
