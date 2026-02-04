@@ -154,7 +154,7 @@ const Index = () => {
   };
 
   const generateScript = async (options: GenerationOptions): Promise<{ script: Script; generationId: string | null }> => {
-    const { topic, sceneCount, sceneDuration, model } = options;
+    const { topic, sceneCount, model } = options;
     
     updateActivity();
     
@@ -168,7 +168,6 @@ const Index = () => {
         body: {
           topic,
           sceneCount,
-          sceneDuration,
           model,
           userId: user?.id,
           guestSessionId: isGuest ? guestSessionId : null

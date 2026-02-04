@@ -18,7 +18,6 @@ import {
 export interface GenerationOptions {
   topic: string;
   sceneCount: number;
-  sceneDuration: number;
   model: string;
 }
 
@@ -56,7 +55,6 @@ export const InputSection = ({
 }: InputSectionProps) => {
   const [topic, setTopic] = useState("");
   const [sceneCount, setSceneCount] = useState("6");
-  const [sceneDuration, setSceneDuration] = useState("4");
   const [selectedModel, setSelectedModel] = useState("google/gemini-2.5-flash-exp:free");
 
   const handleRandomTopic = () => {
@@ -70,7 +68,6 @@ export const InputSection = ({
     const options: GenerationOptions = {
       topic: topic.trim(),
       sceneCount: parseInt(sceneCount),
-      sceneDuration: parseInt(sceneDuration),
       model: selectedModel,
     };
     
@@ -150,26 +147,6 @@ export const InputSection = ({
                   {[3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
                     <SelectItem key={num} value={num.toString()}>
                       {num} scenes
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="sceneDuration">Scene Duration (seconds)</Label>
-              <Select
-                value={sceneDuration}
-                onValueChange={setSceneDuration}
-                disabled={isProcessing}
-              >
-                <SelectTrigger id="sceneDuration">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[3, 4, 5, 6, 7, 8, 10].map((duration) => (
-                    <SelectItem key={duration} value={duration.toString()}>
-                      {duration}s
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -26,7 +26,8 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { topic, sceneCount = 6, sceneDuration = 5, model = "google/gemini-2.5-flash-exp:free", guestSessionId } = await req.json();
+    const { topic, sceneCount = 6, model = "google/gemini-2.5-flash-exp:free", guestSessionId } = await req.json();
+    const sceneDuration = 5; // Fixed duration per scene
 
     // Initialize Supabase client
     const supabaseClient = createClient(
@@ -84,7 +85,7 @@ Respond ONLY with valid JSON in this exact format:
       "sceneNumber": 1,
       "visualDescription": "Detailed description for AI image generation",
       "narration": "The narration text for this scene",
-      "duration": ${sceneDuration}
+      "duration": 5
     }
   ]
 }`;
@@ -96,7 +97,7 @@ Topic: ${topic}
 Each scene should have:
 1. A detailed visual description for AI image generation (be specific about colors, composition, elements). Do not add any text on the same.
 2. Narration text that is engaging and educational
-3. Duration of ${sceneDuration} seconds per scene
+3. Duration of 5 seconds per scene
 
 IMPORTANT: Generate exactly ${sceneCount} scenes, no more, no less.`;
 

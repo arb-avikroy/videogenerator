@@ -139,7 +139,6 @@ export const ScriptPanel = ({ script, isLoading = false, onRegenerate }: ScriptP
                     </audio>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">Duration: {scene.duration}s</p>
               </Card>
             ))}
           </div>
