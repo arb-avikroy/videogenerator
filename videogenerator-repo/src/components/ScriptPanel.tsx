@@ -19,10 +19,11 @@ interface Script {
 
 interface ScriptPanelProps {
   script: Script | null;
-  isLoading: boolean;
+  isLoading?: boolean;
+  onRegenerate?: () => void;
 }
 
-export const ScriptPanel = ({ script, isLoading }: ScriptPanelProps) => {
+export const ScriptPanel = ({ script, isLoading = false, onRegenerate }: ScriptPanelProps) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {

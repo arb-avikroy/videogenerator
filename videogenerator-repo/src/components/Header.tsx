@@ -26,9 +26,10 @@ import { useState } from "react";
 interface HeaderProps {
   isProcessing?: boolean;
   isWaitingForProceed?: boolean;
+  onReset?: () => void;
 }
 
-export const Header = ({ isProcessing = false, isWaitingForProceed = false }: HeaderProps) => {
+export const Header = ({ isProcessing = false, isWaitingForProceed = false, onReset }: HeaderProps) => {
   const { user, isGuest, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();

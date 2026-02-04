@@ -1,17 +1,17 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useCallback, useRef } from "react";
+import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
-import { ProgressTracker, Step } from "@/components/ProgressTracker";
 import { InputSection, GenerationOptions, GenerationStage } from "@/components/InputSection";
 import { ScriptPanel } from "@/components/ScriptPanel";
-import { ScenesPanel } from "@/components/ScenesPanel";
-import { VideoPreview } from "@/components/VideoPreview";
-import { ProcessingLogs } from "@/components/ProcessingLogs";
-import { WorkflowStep } from "@/components/WorkflowControls";
+import { VoiceSelector } from "@/components/VoiceSelector";
 import { toast } from "sonner";
 import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Loader2, Archive, ImageIcon, Volume2, Play, Pause } from "lucide-react";
+import JSZip from "jszip";
 
 interface Scene {
   sceneNumber: number;
@@ -27,798 +27,370 @@ interface Script {
   scenes: Scene[];
 }
 
-interface LogEntry {
-  timestamp: string;
-  message: string;
-  type: "info" | "success" | "error" | "warning";
-}
-
 const Index = () => {
-  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   const { user, isGuest, guestSessionId, updateActivity, loading } = useAuth();
   const navigate = useNavigate();
 
-  const [progressStep, setProgressStep] = useState<Step>("script");
-  const [progressCompletedSteps, setProgressCompletedSteps] = useState<Step[]>([]);
-  
-  // Workflow state
-  const [workflowStep, setWorkflowStep] = useState<WorkflowStep>("model");
-  const [workflowCompletedSteps, setWorkflowCompletedSteps] = useState<WorkflowStep[]>([]);
-  const [isAutomatic, setIsAutomatic] = useState(false);
-  const [isWaitingForProceed, setIsWaitingForProceed] = useState(false);
-  
   const [isProcessing, setIsProcessing] = useState(false);
   const [script, setScript] = useState<Script | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [currentlyGenerating, setCurrentlyGenerating] = useState<number | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
-  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [hasError, setHasError] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [failedStage, setFailedStage] = useState<GenerationStage>(null);
   const [generationId, setGenerationId] = useState<string | null>(null);
-  const [selectedVoice, setSelectedVoice] = useState<string>("en-US-Neural2-J");
-  const [narrationReady, setNarrationReady] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState<string>("en-us");
+  const [selectedProvider, setSelectedProvider] = useState<string>("voicerss");
+  const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+  const [playingAudio, setPlayingAudio] = useState<number | null>(null);
   
-  // Store generation options for step-by-step
   const generationOptionsRef = useRef<GenerationOptions | null>(null);
-  const proceedResolveRef = useRef<(() => void) | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const handleReset = useCallback(() => {
-    // Revoke blob URL before resetting
-    if (videoUrl && videoUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(videoUrl);
+  const getVoiceDisplayName = () => {
+    const providerName = selectedProvider === "voicerss" ? "Voice RSS" : "AIML";
+    let voiceName = selectedVoice;
+    
+    // Get friendly voice name
+    if (selectedProvider === "voicerss") {
+      const voiceMap: Record<string, string> = {
+        "en-us": "English US",
+        "en-gb": "English UK",
+        "en-au": "English AU",
+        "en-in": "English India",
+        "es-es": "Spanish Spain",
+        "es-mx": "Spanish Mexico",
+        "fr-fr": "French",
+        "de-de": "German",
+        "it-it": "Italian",
+        "pt-br": "Portuguese Brazil",
+        "ja-jp": "Japanese",
+        "ko-kr": "Korean",
+        "zh-cn": "Chinese Mandarin",
+        "hi-in": "Hindi",
+      };
+      voiceName = voiceMap[selectedVoice] || selectedVoice;
+    } else {
+      const voiceMap: Record<string, string> = {
+        "alloy": "Alloy",
+        "echo": "Echo",
+        "fable": "Fable",
+        "onyx": "Onyx",
+        "nova": "Nova",
+        "shimmer": "Shimmer",
+        "coral": "Coral",
+      };
+      voiceName = voiceMap[selectedVoice] || selectedVoice;
     }
     
-    setProgressStep("script");
-    setProgressCompletedSteps([]);
-    setWorkflowStep("model");
-    setWorkflowCompletedSteps([]);
+    return `${providerName} - ${voiceName}`;
+  };
+
+  const handleReset = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     setIsProcessing(false);
-    setIsWaitingForProceed(false);
     setScript(null);
     setScenes([]);
     setCurrentlyGenerating(null);
-    setVideoUrl(null);
-    setIsGeneratingVideo(false);
-    setLogs([]);
     setHasError(false);
     setLastError(null);
     setFailedStage(null);
     setGenerationId(null);
-    setNarrationReady(false);
+    setIsGeneratingAudio(false);
+    setPlayingAudio(null);
     generationOptionsRef.current = null;
-    proceedResolveRef.current = null;
-  }, [videoUrl]);
-
-  const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
-    const timestamp = new Date().toLocaleTimeString("en-US", { 
-      hour12: false, 
-      hour: "2-digit", 
-      minute: "2-digit", 
-      second: "2-digit" 
-    });
-    setLogs(prev => [...prev, { timestamp, message, type }]);
   }, []);
-
-  // Clean up blob URLs to prevent memory leaks
-  useEffect(() => {
-    return () => {
-      if (videoUrl && videoUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(videoUrl);
-      }
-    };
-  }, [videoUrl]);
-
-  const completeProgressStep = useCallback((step: Step) => {
-    setProgressCompletedSteps(prev => [...prev, step]);
-  }, []);
-
-  const completeWorkflowStep = useCallback((step: WorkflowStep) => {
-    setWorkflowCompletedSteps(prev => [...prev, step]);
-  }, []);
-
-  const handleRetryVideo = useCallback(async () => {
-    if (!scenes || scenes.length === 0) {
-      toast.error("No scenes available", {
-        description: "Cannot retry video generation without scenes."
-      });
-      return;
-    }
-
-    setIsProcessing(true);
-    setHasError(false);
-    setLastError(null);
-    setFailedStage(null);
-    setProgressStep("merge");
-    setWorkflowStep("video");
-    addLog("Retrying video generation...", "info");
-
-    try {
-      const videoResult = await generateVideo(scenes, generationId);
-      setVideoUrl(videoResult);
-      addLog("Video merged successfully!", "success");
-
-      completeProgressStep("merge");
-      completeWorkflowStep("video");
-
-      setProgressStep("review");
-      addLog("Video ready for review", "info");
-      await new Promise(r => setTimeout(r, 500));
-      completeProgressStep("review");
-
-      setProgressStep("download");
-      addLog("Video generation complete! Ready for download.", "success");
-      completeProgressStep("download");
-
-      toast.success("Video generated successfully!", {
-        description: "Your video is ready for download."
-      });
-    } catch (error) {
-      console.error("Video generation error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      addLog(`Error: ${errorMessage}`, "error");
-      setHasError(true);
-      setLastError(errorMessage);
-      setFailedStage('video');
-      toast.error("Failed to generate video", {
-        description: errorMessage
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [scenes, generationId, addLog, completeProgressStep, completeWorkflowStep]);
-
-  const waitForProceed = (): Promise<void> => {
-    return new Promise((resolve) => {
-      setIsWaitingForProceed(true);
-      setIsProcessing(false);
-      proceedResolveRef.current = resolve;
-    });
-  };
-
-  const handleProceedStep = async () => {
-    // Handle narration step - proceed to image generation
-    if (workflowStep === "narration" && workflowCompletedSteps.includes("narration")) {
-      // User has generated narration and wants to proceed to images
-      setIsProcessing(true);
-      setProgressStep("images");
-      setWorkflowStep("images");
-      addLog("Starting image generation...", "info");
-      
-      try {
-        const scenesWithImages = await generateImages(scenes, generationId);
-        setScenes(scenesWithImages);
-        addLog("All images generated successfully!", "success");
-        
-        // Mark images as complete
-        completeProgressStep("images");
-        completeWorkflowStep("images");
-        
-        toast.success("Images generated successfully!");
-      } catch (error) {
-        console.error("Image generation error:", error);
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        addLog(`Error: ${errorMessage}`, "error");
-        setHasError(true);
-        setLastError(errorMessage);
-        setFailedStage('image');
-        toast.error("Failed to generate images", {
-          description: errorMessage
-        });
-      } finally {
-        setIsProcessing(false);
-      }
-      return;
-    }
-    
-    // Handle images step - proceed to video generation
-    if (workflowStep === "images" && workflowCompletedSteps.includes("images")) {
-      // User has generated images and wants to proceed to video
-      setIsProcessing(true);
-      setProgressStep("merge");
-      setWorkflowStep("video");
-      addLog("Starting video generation...", "info");
-      
-      try {
-        const videoResult = await generateVideo(scenes, generationId);
-        setVideoUrl(videoResult);
-        addLog("Video merged successfully!", "success");
-        
-        // Mark video as complete
-        completeProgressStep("merge");
-        completeWorkflowStep("video");
-        
-        // Final steps
-        setProgressStep("review");
-        addLog("Video ready for review", "info");
-        await new Promise(r => setTimeout(r, 500));
-        completeProgressStep("review");
-        
-        setProgressStep("download");
-        addLog("Video generation complete! Ready for download.", "success");
-        completeProgressStep("download");
-        
-        toast.success("Video generated successfully!", {
-          description: "Your video is ready for download."
-        });
-      } catch (error) {
-        console.error("Video generation error:", error);
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        addLog(`Error: ${errorMessage}`, "error");
-        setHasError(true);
-        setLastError(errorMessage);
-        setFailedStage('video');
-        toast.error("Failed to generate video", {
-          description: errorMessage
-        });
-      } finally {
-        setIsProcessing(false);
-      }
-      return;
-    }
-    
-    // Normal flow for other steps
-    if (proceedResolveRef.current) {
-      setIsWaitingForProceed(false);
-      setIsProcessing(true);
-      proceedResolveRef.current();
-      proceedResolveRef.current = null;
-    }
-  };
-
-  const handleRunAutomatic = () => {
-    // Continue automatically without waiting
-    if (proceedResolveRef.current) {
-      proceedResolveRef.current();
-      proceedResolveRef.current = null;
-    }
-  };
 
   const generateScript = async (options: GenerationOptions): Promise<{ script: Script; generationId: string | null }> => {
     const { topic, sceneCount, sceneDuration, model } = options;
     
-    updateActivity(); // Track user activity
+    updateActivity();
     
     if (!isSupabaseConfigured()) {
-      addLog("Supabase not configured - using demo mode...", "warning");
-      await new Promise(r => setTimeout(r, 1500));
-      
-      const mockScenes: Scene[] = [];
-      for (let i = 1; i <= sceneCount; i++) {
-        mockScenes.push({
-          sceneNumber: i,
-          visualDescription: `Demo scene ${i} visual description for topic: ${topic}`,
-          narration: `This is demo narration for scene ${i} about ${topic}.`,
-          duration: sceneDuration
-        });
-      }
-      
-      return {
-        script: {
-          title: `${topic}: A Deep Dive`,
-          scenes: mockScenes
-        },
-        generationId: null
-      };
+      toast.error("Supabase not configured");
+      throw new Error("Supabase is not configured");
     }
-
-    addLog(`Connecting to AI script generator (${model})...`, "info");
-    
-    // Prepare request body with auth context
-    const requestBody = { 
-      topic, 
-      sceneCount, 
-      sceneDuration, 
-      model,
-      guestSessionId: isGuest ? guestSessionId : undefined
-    };
-    
-    const { data: scriptData, error: scriptError } = await supabase.functions.invoke(
-      "generate-script",
-      { 
-        body: requestBody,
-        headers: user ? { Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` } : {}
-      }
-    );
-
-    if (scriptError) {
-      type ScriptError = { message?: string; context?: { body?: unknown } };
-      const scriptErr = scriptError as ScriptError;
-      const body = scriptErr?.context?.body;
-
-      let message = scriptErr?.message || "Failed to generate script";
-      if (body) {
-        if (typeof body === "string") {
-          try {
-            const parsed = JSON.parse(body);
-            message = parsed?.error || parsed?.message || message;
-          } catch {
-            // ignore
-          }
-        } else if (typeof body === "object") {
-          const b = body as Record<string, unknown>;
-          if (typeof b.error === 'string') message = b.error;
-          else if (typeof b.message === 'string') message = b.message;
-        }
-      }
-
-      throw new Error(message);
-    }
-
-    if (!scriptData || !scriptData.scenes) {
-      throw new Error("Invalid script response");
-    }
-
-    // Store and return generation ID from response
-    const genId = scriptData.generationId || null;
-    if (genId) {
-      setGenerationId(genId);
-    }
-
-    return {
-      script: {
-        title: scriptData.title,
-        scenes: scriptData.scenes.map((scene: Scene) => ({
-          ...scene,
-          imageUrl: undefined
-        }))
-      },
-      generationId: genId
-    };
-  };
-
-  const generateImages = async (scriptScenes: Scene[], genId: string | null): Promise<Scene[]> => {
-    const updatedScenes: Scene[] = [...scriptScenes];
-    
-    updateActivity(); // Track user activity
-    
-    for (let i = 0; i < scriptScenes.length; i++) {
-      setCurrentlyGenerating(scriptScenes[i].sceneNumber);
-      const scene = scriptScenes[i];
-      addLog(`Generating image for Scene ${i + 1}...`, "info");
-      
-      try {
-        const { data, error } = await supabase.functions.invoke('generate-image', {
-          body: {
-            prompt: `Create a high-quality, cinematic image for a video scene: ${scene.visualDescription}. Style: Professional, visually striking, suitable for video content.`,
-            sceneNumber: scene.sceneNumber,
-            provider: generationOptionsRef.current?.imageProvider,
-            guestSessionId: isGuest ? guestSessionId : undefined,
-            scriptTitle: script?.title,
-            generationId: genId
-          },
-          headers: user ? { Authorization: `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}` } : {}
-        });
-
-        if (error) {
-          throw new Error(error.message);
-        }
-
-        if (!data.success) {
-          throw new Error(data.error || 'Image generation failed');
-        }
-
-        updatedScenes[i] = { ...updatedScenes[i], imageUrl: data.imageUrl };
-        setScenes([...updatedScenes]);
-        addLog(`Scene ${i + 1} image generated successfully`, "success");
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-        addLog(`Failed to generate image for Scene ${i + 1}: ${errorMsg}`, "error");
-        // Use a placeholder on failure
-        updatedScenes[i] = { 
-          ...updatedScenes[i], 
-          imageUrl: `https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=400&h=400&fit=crop` 
-        };
-        setScenes([...updatedScenes]);
-      }
-    }
-    
-    setCurrentlyGenerating(null);
-    return updatedScenes;
-  };
-  const generateNarrationAudio = async (scriptScenes: Scene[], genId: string | null): Promise<Scene[]> => {
-    const updatedScenes: Scene[] = [...scriptScenes];
-    const audioUrls: Array<{ sceneNumber: number; audioUrl: string }> = [];
-    
-    setIsGeneratingAudio(true);
-    updateActivity();
-    addLog("Starting narration audio generation...", "info");
-    
-    for (let i = 0; i < scriptScenes.length; i++) {
-      const scene = scriptScenes[i];
-      addLog(`Generating narration audio for Scene ${i + 1}...`, "info");
-      
-      try {
-        if (!isSupabaseConfigured()) {
-          // Fallback to browser TTS in demo mode
-          addLog("Demo mode: using browser TTS", "warning");
-          const synth = window.speechSynthesis;
-          const utterance = new SpeechSynthesisUtterance(scene.narration);
-          utterance.rate = 0.9;
-          utterance.pitch = 1.0;
-          synth.speak(utterance);
-          
-          const metadata = {
-            text: scene.narration,
-            sceneNumber: scene.sceneNumber,
-          };
-          const placeholderUrl = `data:text/plain;base64,${btoa(JSON.stringify(metadata))}`;
-          updatedScenes[i] = { ...updatedScenes[i], audioUrl: placeholderUrl };
-          setScenes([...updatedScenes]);
-          addLog(`Scene ${i + 1} narration queued (browser TTS)`, "success");
-          continue;
-        }
-
-        // Call Edge Function for server-side TTS generation
-        const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
-        const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
-        
-        console.log("TTS Request:", {
-          url: `${SUPABASE_URL}/functions/v1/generate-narration`,
-          hasKey: !!SUPABASE_ANON_KEY,
-          keyPrefix: SUPABASE_ANON_KEY ? SUPABASE_ANON_KEY.substring(0, 20) + "..." : "empty",
-          voice: selectedVoice,
-          sceneNumber: scene.sceneNumber
-        });
-        
-        const response = await fetch(
-          `${SUPABASE_URL}/functions/v1/generate-narration`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-            },
-            body: JSON.stringify({
-              text: scene.narration,
-              sceneNumber: scene.sceneNumber,
-              generationId: genId,
-              voice: selectedVoice, // User-selected voice from VoiceSelector
-            }),
-          }
-        );
-
-        console.log("TTS Response:", response.status, response.statusText);
-        const data = await response.json();
-        console.log("TTS Data:", data);
-
-        if (!data.success) {
-          throw new Error(data.error || "Narration generation failed");
-        }
-
-        // If API returned useBrowserTTS flag, fallback to browser TTS
-        if (data.useBrowserTTS) {
-          addLog(`Scene ${i + 1}: No TTS API configured, using browser TTS`, "warning");
-          const synth = window.speechSynthesis;
-          const utterance = new SpeechSynthesisUtterance(scene.narration);
-          utterance.rate = 0.9;
-          utterance.pitch = 1.0;
-          synth.speak(utterance);
-          
-          const metadata = {
-            text: scene.narration,
-            sceneNumber: scene.sceneNumber,
-          };
-          const placeholderUrl = `data:text/plain;base64,${btoa(JSON.stringify(metadata))}`;
-          updatedScenes[i] = { ...updatedScenes[i], audioUrl: placeholderUrl };
-        } else {
-          // Use the audio URL from server
-          updatedScenes[i] = { ...updatedScenes[i], audioUrl: data.audioUrl };
-          audioUrls.push({ sceneNumber: scene.sceneNumber, audioUrl: data.audioUrl });
-          addLog(`Scene ${i + 1} narration generated (${data.provider})`, "success");
-        }
-        
-        setScenes([...updatedScenes]);
-        
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-        addLog(`Failed to generate audio for Scene ${i + 1}: ${errorMsg}`, "warning");
-        
-        // Fallback to browser TTS on error
-        try {
-          const synth = window.speechSynthesis;
-          const utterance = new SpeechSynthesisUtterance(scene.narration);
-          utterance.rate = 0.9;
-          synth.speak(utterance);
-          addLog(`Scene ${i + 1}: Fallback to browser TTS`, "info");
-        } catch {
-          // Silently fail if browser TTS also fails
-        }
-      }
-    }
-    
-    // Save narration audio URLs to database if generationId exists
-    if (genId && audioUrls.length > 0) {
-      try {
-        const { error: updateError } = await supabase
-          .from('generations')
-          .update({ narration_audio: audioUrls })
-          .eq('id', genId);
-        
-        if (updateError) {
-          console.error('Error saving narration audio:', updateError);
-          addLog('Failed to save narration audio to database', 'warning');
-        } else {
-          addLog('Narration audio saved to database', 'success');
-        }
-      } catch (err) {
-        console.error('Error updating generation:', err);
-      }
-    }
-    
-    setIsGeneratingAudio(false);
-    addLog("All narration audio generated successfully!", "success");
-    return updatedScenes;
-  };
-  const generateVideo = async (videoScenes: Scene[], genId: string | null): Promise<string> => {
-    setIsGeneratingVideo(true);
-    addLog("Starting Vertex AI video generation for scenes...", "info");
-    addLog(`Scenes available: ${videoScenes.length}`, 'info');
-    
-    updateActivity(); // Track user activity
 
     try {
-      if (!videoScenes || videoScenes.length === 0) {
-        throw new Error('No scenes available for video generation');
-      }
-
-      // Get generation options
-      const options = generationOptionsRef.current;
-      if (!options) {
-        throw new Error('Generation options not available');
-      }
-
-      // Prepare scenes for Vertex AI Edge Function
-      const requestScenes = videoScenes.map(s => ({ 
-        sceneNumber: s.sceneNumber, 
-        imageUrl: s.imageUrl || '', 
-        duration: s.duration,
-        audioUrl: s.audioUrl || ''
-      }));
-      
-      addLog(`Calling Vertex AI Veo 3.1 for ${requestScenes.length} scenes...`, 'info');
-      addLog(`Aspect Ratio: ${options.aspectRatio}, Resolution: ${options.resolution}`, 'info');
-
-      // Call Vertex AI Edge Function
-      const { data, error } = await supabase.functions.invoke('generate-video', { 
-        body: { 
-          scenes: requestScenes,
-          aspectRatio: options.aspectRatio || '16:9',
-          resolution: options.resolution || '1080p',
-          generationId: genId,
-          guestSessionId: isGuest ? guestSessionId : undefined
+      const { data, error } = await supabase.functions.invoke("generate-script", {
+        body: {
+          topic,
+          sceneCount,
+          sceneDuration,
+          model,
+          userId: user?.id,
+          guestSessionId: isGuest ? guestSessionId : null
         }
       });
 
-      if (error) throw new Error(error.message || 'Failed to call generate-video');
-      if (!data || !data.success) throw new Error(data?.error || 'Vertex AI video generation failed');
+      if (error) throw error;
+      if (!data) throw new Error("Invalid response from script generation");
 
-      addLog(`Generated ${data.videos.length} scene videos successfully!`, 'success');
+      // The function returns the script directly with title and scenes
+      const script: Script = {
+        title: data.title,
+        scenes: data.scenes
+      };
 
-      // Prepare scenes for audio mixing
-      const { mergeVideosWithAudioMixing } = await import('@/lib/ffmpeg');
-      
-      const scenesForMixing = data.videos.map((v: any) => ({
-        videoUrl: v.videoUrl,
-        narrationUrl: videoScenes[v.sceneNumber - 1]?.audioUrl || '',
-        filenameBase: `scene_${v.sceneNumber}`
-      }));
-
-      addLog('Merging videos with audio (narration 100%, video sound 40%)...', 'info');
-      const finalUrl = await mergeVideosWithAudioMixing(scenesForMixing);
-
-      addLog('Video merged and uploaded successfully!', 'success');
-      
-      // Upload final video to Supabase Storage
-      if (genId && finalUrl) {
-        try {
-          // Convert blob URL to blob
-          const response = await fetch(finalUrl);
-          const blob = await response.blob();
-          
-          const fileName = `${genId}/final_video.mp4`;
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('generated-content')
-            .upload(fileName, blob, { upsert: true });
-
-          if (uploadError) {
-            addLog(`Failed to upload final video: ${uploadError.message}`, 'warning');
-          } else {
-            const { data: { publicUrl } } = supabase.storage
-              .from('generated-content')
-              .getPublicUrl(fileName);
-            
-            // Update database with final video URL
-            await supabase
-              .from('generations')
-              .update({ 
-                video_url: publicUrl,
-                status: 'complete'
-              })
-              .eq('id', genId);
-            
-            addLog('Final video uploaded to storage', 'success');
-          }
-        } catch (uploadErr) {
-          console.error('Upload error:', uploadErr);
-          addLog('Failed to upload final video to storage', 'warning');
-        }
-      }
-
-      setIsGeneratingVideo(false);
-      return finalUrl;
+      return {
+        script,
+        generationId: data.generationId || null
+      };
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog(`Video generation failed: ${msg}`, 'error');
-      setIsGeneratingVideo(false);
+      console.error("Script generation error:", err);
       throw err;
     }
   };
 
-  const startGeneration = async (options: GenerationOptions) => {
-    generationOptionsRef.current = options;
-    setIsProcessing(true);
-    setLogs([]);
-    setScript(null);
-    setScenes([]);
-    setVideoUrl(null);
-    setWorkflowCompletedSteps([]);
-    setProgressCompletedSteps([]);
-    
-    const { topic, sceneCount, sceneDuration } = options;
-    
-    let generatedScript: Script;
-    let genId: string | null = null;
-    let scenesWithImages: Scene[];
-    let scenesWithAudio: Scene[];
-    
-    try {
-      // Complete model selection step
-      completeWorkflowStep("model");
-      addLog(`Starting video generation for: "${topic}" (${sceneCount} scenes, ${sceneDuration}s each)`, "info");
-      addLog(`Using model: ${options.model}`, "info");
-      
-      // Step 1: Script Generation
-      try {
-        setWorkflowStep("script");
-        setProgressStep("script");
+  const generateImages = async (scenes: Scene[], genId: string | null) => {
+    if (!isSupabaseConfigured()) {
+      toast.error("Supabase not configured");
+      return scenes;
+    }
 
-        addLog("Generating script...", "info");
-        const scriptResult = await generateScript(options);
-        generatedScript = scriptResult.script;
-        genId = scriptResult.generationId;
-        setScript(generatedScript);
-        setScenes(generatedScript.scenes);
-        addLog(`Script generated successfully with ${generatedScript.scenes.length} scenes!`, "success");
-        completeProgressStep("script");
-        completeWorkflowStep("script");
-      } catch (scriptError) {
-        setFailedStage('script');
-        throw scriptError;
-      }
-      
-      // Step 2: Narration Audio Generation
-      setProgressStep("narration");
-      setNarrationReady(true);
-      addLog("Script complete. Ready for narration generation.", "info");
-      
-      // If manual mode, stop here and wait for user to generate narration
-      if (!isAutomatic) {
-        addLog("Review and edit narration text, then click Generate Narration", "info");
-        setScenes(generatedScript.scenes);
-        setProgressStep("narration");
-        setWorkflowStep("narration");
-        // Stop here and wait for manual narration trigger
-        return;
-      }
-      
-      // Automatic mode: continue with narration
-      setProgressStep("narration");
-      setWorkflowStep("narration");
-      addLog("Starting narration audio generation...", "info");
-      scenesWithAudio = await generateNarrationAudio(generatedScript.scenes, genId);
-      setScenes(scenesWithAudio);
-      addLog("All narration audio generated successfully!", "success");
-      completeProgressStep("narration");
-      completeWorkflowStep("narration");
-      setNarrationReady(false);
-      
-      // Step 3: Image Generation
+    const updatedScenes = [...scenes];
+
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      setCurrentlyGenerating(i);
+
       try {
-        setWorkflowStep("images");
-        setProgressStep("images");
-        
-        addLog("Starting image generation...", "info");
-        scenesWithImages = await generateImages(scenesWithAudio, genId);
-        setScenes(scenesWithImages);
-        addLog("All images generated successfully!", "success");
-        completeProgressStep("images");
-        completeWorkflowStep("images");
-      } catch (imageError) {
-        setFailedStage('image');
-        throw imageError;
+        updateActivity();
+
+        const { data, error } = await supabase.functions.invoke("generate-image", {
+          body: {
+            prompt: scene.visualDescription,
+            sceneNumber: scene.sceneNumber,
+            generationId: genId,
+            userId: user?.id,
+            guestSessionId: isGuest ? guestSessionId : null
+          }
+        });
+
+        if (error) throw error;
+        if (!data || !data.imageUrl) throw new Error("No image URL returned");
+
+        updatedScenes[i] = {
+          ...scene,
+          imageUrl: data.imageUrl
+        };
+
+        setScenes([...updatedScenes]);
+      } catch (err) {
+        console.error(`Error generating image for scene ${scene.sceneNumber}:`, err);
+        throw err;
       }
-      
-      // Step 4: Video Generation
+    }
+
+    setCurrentlyGenerating(null);
+    return updatedScenes;
+  };
+  const generateNarration = async (scenes: Scene[], genId: string | null) => {
+    if (!isSupabaseConfigured()) {
+      toast.error("Supabase not configured");
+      return scenes;
+    }
+
+    const updatedScenes = [...scenes];
+    setIsGeneratingAudio(true);
+
+    for (let i = 0; i < scenes.length; i++) {
+      const scene = scenes[i];
+      setCurrentlyGenerating(i);
+
       try {
-        setWorkflowStep("video");
-        setProgressStep("merge");
-        addLog("Starting video generation...", "info");
-        const videoResult = await generateVideo(scenesWithImages, genId);
-        setVideoUrl(videoResult);
-        addLog("Video merged successfully!", "success");
-        completeProgressStep("merge");
-        completeWorkflowStep("video");
-      } catch (videoError) {
-        setFailedStage('video');
-        throw videoError;
+        updateActivity();
+
+        const { data, error } = await supabase.functions.invoke("generate-narration", {
+          body: {
+            text: scene.narration,
+            voice: selectedVoice,
+            provider: selectedProvider,
+            sceneNumber: scene.sceneNumber,
+            generationId: genId,
+          }
+        });
+
+        if (error) throw error;
+        if (!data || !data.audioUrl) throw new Error("No audio URL returned");
+
+        updatedScenes[i] = {
+          ...scene,
+          audioUrl: data.audioUrl
+        };
+
+        setScenes([...updatedScenes]);
+      } catch (err) {
+        console.error(`Error generating audio for scene ${scene.sceneNumber}:`, err);
+        throw err;
       }
+    }
+
+    setCurrentlyGenerating(null);
+    setIsGeneratingAudio(false);
+    return updatedScenes;
+  };
+  const handleGenerate = async (options: GenerationOptions) => {
+    setIsProcessing(true);
+    setHasError(false);
+    setLastError(null);
+    setFailedStage(null);
+    generationOptionsRef.current = options;
+
+    try {
+      // Generate Script
+      toast.info("Generating script...");
+      const { script: generatedScript, generationId: genId } = await generateScript(options);
       
-      // Final steps
-      setProgressStep("review");
-      addLog("Video ready for review", "info");
-      await new Promise(r => setTimeout(r, 500));
-      completeProgressStep("review");
-      
-      setProgressStep("download");
-      addLog("Video generation complete! Ready for download.", "success");
-      completeProgressStep("download");
-      
-      toast.success("Video generated successfully!", {
-        description: "Your video is ready for download."
-      });
-      
+      setScript(generatedScript);
+      setScenes(generatedScript.scenes);
+      setGenerationId(genId);
+      toast.success("Script generated successfully!");
+
+      // Generate Images
+      toast.info("Generating images...");
+      await generateImages(generatedScript.scenes, genId);
+      toast.success("Images generated successfully!");
+
     } catch (error) {
       console.error("Generation error:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      addLog(`Error: ${errorMessage}`, "error");
       setHasError(true);
       setLastError(errorMessage);
-      toast.error("Failed to generate video", {
+      setFailedStage(script ? 'image' : 'script');
+      toast.error("Failed to generate content", {
         description: errorMessage
       });
     } finally {
       setIsProcessing(false);
-      setIsWaitingForProceed(false);
     }
   };
 
-  const generateNarrationStep = async (scenesToNarrate: Scene[], genId: string | null) => {
-    addLog("Starting narration audio generation...", "info");
-    const scenesWithAudio = await generateNarrationAudio(scenesToNarrate, genId);
-    setScenes(scenesWithAudio);
-    addLog("All narration audio generated successfully!", "success");
-    return scenesWithAudio;
+  const handleRetry = () => {
+    if (!generationOptionsRef.current) return;
+
+    if (failedStage === 'script') {
+      handleGenerate(generationOptionsRef.current);
+    } else if (failedStage === 'image' && script) {
+      setIsProcessing(true);
+      setHasError(false);
+      setLastError(null);
+      generateImages(script.scenes, generationId)
+        .then(() => {
+          toast.success("Images generated successfully!");
+        })
+        .catch(error => {
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          setHasError(true);
+          setLastError(errorMessage);
+          toast.error("Failed to generate images", {
+            description: errorMessage
+          });
+        })
+        .finally(() => {
+          setIsProcessing(false);
+        });
+    }
+  };
+
+  const downloadImages = async () => {
+    if (!scenes.length || !script) return;
+    
+    const scenesWithImages = scenes.filter(scene => scene.imageUrl);
+    if (scenesWithImages.length === 0) {
+      toast.error("No images to download");
+      return;
+    }
+
+    try {
+      toast.info("Preparing images for download...");
+      const zip = new JSZip();
+      
+      // Fetch all images and add to zip
+      for (const scene of scenesWithImages) {
+        if (scene.imageUrl) {
+          try {
+            const response = await fetch(scene.imageUrl);
+            const blob = await response.blob();
+            const extension = scene.imageUrl.includes('.png') ? 'png' : 'jpg';
+            zip.file(`scene_${scene.sceneNumber}.${extension}`, blob);
+          } catch (err) {
+            console.error(`Failed to fetch image for scene ${scene.sceneNumber}:`, err);
+          }
+        }
+      }
+      
+      // Generate zip file
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${script.title.replace(/\s+/g, '_')}_images.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${scenesWithImages.length} images!`);
+    } catch (error) {
+      console.error("Error creating zip:", error);
+      toast.error("Failed to download images");
+    }
+  };
+
+  const downloadAudio = async () => {
+    if (!scenes.length || !script) return;
+    
+    const scenesWithAudio = scenes.filter(scene => scene.audioUrl);
+    if (scenesWithAudio.length === 0) {
+      toast.error("No audio to download");
+      return;
+    }
+
+    try {
+      toast.info("Preparing audio files for download...");
+      const zip = new JSZip();
+      
+      // Fetch all audio files and add to zip
+      for (const scene of scenesWithAudio) {
+        if (scene.audioUrl) {
+          try {
+            const response = await fetch(scene.audioUrl);
+            const blob = await response.blob();
+            // Audio files from AIML API are typically MP3
+            const extension = 'mp3';
+            zip.file(`scene_${scene.sceneNumber}_narration.${extension}`, blob);
+          } catch (err) {
+            console.error(`Failed to fetch audio for scene ${scene.sceneNumber}:`, err);
+          }
+        }
+      }
+      
+      // Generate zip file
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${script.title.replace(/\s+/g, '_')}_audio.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${scenesWithAudio.length} audio files!`);
+    } catch (error) {
+      console.error("Error creating audio zip:", error);
+      toast.error("Failed to download audio files");
+    }
   };
 
   const handleGenerateNarration = async () => {
-    if (!scenes.length || !narrationReady) return;
-    
+    if (!script || !scenes.length) return;
+
     setIsProcessing(true);
-    addLog(`Using voice: ${selectedVoice}`, "info");
-    setProgressStep("narration");
-    setWorkflowStep("narration");
-    
     try {
-      await generateNarrationStep(scenes, generationId);
-      setNarrationReady(false);
-      
-      // Mark narration as complete
-      completeProgressStep("narration");
-      completeWorkflowStep("narration");
-      
-      addLog("Narration generated successfully!", "success");
-      addLog("Click 'Proceed Next' to continue with image generation", "info");
-      toast.success("Narration generated!", {
-        description: "Audio has been generated for all scenes."
-      });
+      toast.info("Generating narration...");
+      await generateNarration(scenes, generationId);
+      toast.success("Narration generated successfully!");
     } catch (error) {
-      console.error("Narration generation error:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      addLog(`Error: ${errorMessage}`, "error");
       toast.error("Failed to generate narration", {
         description: errorMessage
       });
@@ -827,208 +399,230 @@ const Index = () => {
     }
   };
 
-  const handleNarrationEdit = (sceneNumber: number, newNarration: string) => {
-    setScenes(prevScenes => 
-      prevScenes.map(scene => 
-        scene.sceneNumber === sceneNumber 
-          ? { ...scene, narration: newNarration } 
-          : scene
-      )
-    );
-  };
-
-  const handleRegenerateNarration = () => {
-    // Clear all audio URLs and reset workflow to narration only
-    setScenes(prevScenes => 
-      prevScenes.map(scene => ({ ...scene, audioUrl: undefined }))
-    );
-    setNarrationReady(true);
-    setProgressStep("narration");
-    setWorkflowStep("narration");
-    // Remove narration and all subsequent steps from completed steps
-    setProgressCompletedSteps(prev => prev.filter(step => step === "script"));
-    setWorkflowCompletedSteps(prev => prev.filter(step => step === "model" || step === "script"));
-    addLog("Narration cleared. Ready to regenerate.", "info");
-    toast.info("You can now edit and regenerate narration");
-  };
-
-  const handleDownload = () => {
-    if (videoUrl) {
-      const link = document.createElement("a");
-      link.href = videoUrl;
-      link.download = `${script?.title?.toLowerCase().replace(/\s+/g, "-") || "video"}.mp4`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      addLog("Download started", "success");
-    }
-  };
-
-  const handleRetry = (newOptions: GenerationOptions) => {
-    setHasError(false);
-    setLastError(null);
-    setFailedStage(null);
-    startGeneration(newOptions);
-  };
-
-  const handleDownloadImagesZip = async () => {
-    try {
-      const scenesWithImages = scenes.filter((s) => s.imageUrl);
-      const scenesWithAudio = scenes.filter((s) => s.audioUrl);
+  const handlePlayAudio = (sceneIndex: number, audioUrl: string) => {
+    if (playingAudio === sceneIndex) {
+      // Pause current audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      setPlayingAudio(null);
+    } else {
+      // Stop any currently playing audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
       
-      if (scenesWithImages.length === 0 && scenesWithAudio.length === 0) {
-        toast.error("No images or audio to download yet.");
-        return;
-      }
-
-      addLog("Preparing scenes zip with images and narration...", "info");
-
-      const JSZip = (await import("jszip")).default;
-      const zip = new JSZip();
-
-      const toBlob = async (url: string) => {
-        if (url.startsWith("data:")) {
-          const [meta, data] = url.split(",");
-          const isBase64 = meta.includes("base64");
-          const bytes = isBase64 ? Uint8Array.from(atob(data), (c) => c.charCodeAt(0)) : new TextEncoder().encode(data);
-          const mime = meta.split(":")[1]?.split(";")[0] || "image/png";
-          return new Blob([bytes], { type: mime });
-        }
-        const resp = await fetch(url);
-        const buf = await resp.arrayBuffer();
-        const mime = resp.headers.get("content-type") || "image/png";
-        return new Blob([buf], { type: mime });
+      // Play new audio
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audio.play();
+      setPlayingAudio(sceneIndex);
+      
+      audio.onended = () => {
+        setPlayingAudio(null);
+        audioRef.current = null;
       };
-
-      // Add images folder
-      if (scenesWithImages.length > 0) {
-        const imagesFolder = zip.folder("images");
-        for (const scene of scenesWithImages) {
-          const blob = await toBlob(scene.imageUrl!);
-          const filename = `scene-${scene.sceneNumber || scenesWithImages.indexOf(scene) + 1}.png`;
-          imagesFolder?.file(filename, blob);
-        }
-        addLog(`Added ${scenesWithImages.length} images`, "info");
-      }
-
-      // Add audio folder
-      if (scenesWithAudio.length > 0) {
-        const audioFolder = zip.folder("narration");
-        for (const scene of scenesWithAudio) {
-          const blob = await toBlob(scene.audioUrl!);
-          // Audio files are typically MP3
-          const filename = `scene-${scene.sceneNumber || scenesWithAudio.indexOf(scene) + 1}.mp3`;
-          audioFolder?.file(filename, blob);
-        }
-        addLog(`Added ${scenesWithAudio.length} narration audio files`, "info");
-      }
-
-      const zipBlob = await zip.generateAsync({ type: "blob" });
-      const url = URL.createObjectURL(zipBlob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${script?.title?.toLowerCase().replace(/\s+/g, "-") || "scenes"}-content.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      addLog("Scenes zip download started", "success");
-      toast.success("Scenes zip ready with images and narration");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addLog(`Failed to download scenes zip: ${msg}`, "error");
-      toast.error("Could not create scenes zip", { description: msg });
     }
   };
 
-  // Check authentication - redirect to login if needed
-  // MUST BE AFTER ALL HOOKS
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  // Allow both authenticated users and guests
   if (!user && !isGuest) {
-    navigate('/login');
+    navigate("/login");
     return null;
   }
 
   return (
-    <div className="min-h-screen bg-background mountain-pattern">
-      <Header isProcessing={isProcessing} isWaitingForProceed={isWaitingForProceed} />
-      
-      <main className="container mx-auto px-4 pb-12">
-        <ProgressTracker 
-          currentStep={progressStep} 
-          completedSteps={progressCompletedSteps} 
-        />
-        
-        <InputSection 
-          onGenerate={startGeneration}
-          onProceedStep={handleProceedStep}
-          onRunAutomatic={handleRunAutomatic}
-          isProcessing={isProcessing}
-          isWaitingForProceed={isWaitingForProceed}
-          currentStep={workflowStep}
-          completedSteps={workflowCompletedSteps}
-          isAutomatic={isAutomatic}
-          onToggleMode={setIsAutomatic}
-          onReset={handleReset}
-          hasError={hasError}
-          lastError={lastError}
-          failedStage={failedStage}
-          onRetry={handleRetry}
-          onRetryVideo={handleRetryVideo}
-          lastOptions={generationOptionsRef.current}
-        />
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary">
+      <Header onReset={handleReset} />
 
-        <AnimatePresence mode="wait">
-          <motion.div 
-            className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-          >
-            <ScriptPanel 
-              script={script} 
-              isLoading={isProcessing && !script} 
-            />
-            <ScenesPanel 
-              scenes={scenes} 
-              isLoading={isProcessing && scenes.length === 0}
-              currentlyGenerating={currentlyGenerating}
-              onDownloadZip={handleDownloadImagesZip}
-              canDownload={scenes.some((s) => !!s.imageUrl)}
-              onNarrationEdit={handleNarrationEdit}
-              narrationReady={narrationReady}
-              selectedVoice={selectedVoice}
-              onVoiceChange={setSelectedVoice}
-              onGenerateNarration={handleGenerateNarration}
-              isGeneratingAudio={isGeneratingAudio}
-              onRegenerateNarration={handleRegenerateNarration}
-              currentWorkflowStep={workflowStep}
-            />
-            <VideoPreview 
-              videoUrl={videoUrl}
-              isGenerating={isGeneratingVideo}
-              onDownload={handleDownload}
-            />
-            <ProcessingLogs logs={logs} />
-          </motion.div>
-        </AnimatePresence>
+      <main className="container mx-auto px-4 py-8 space-y-6">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6"
+        >
+          <InputSection
+            onGenerate={handleGenerate}
+            isProcessing={isProcessing}
+            hasError={hasError}
+            onRetry={handleRetry}
+            lastError={lastError}
+            failedStage={failedStage}
+          />
+
+          {script && (
+            <>
+              <ScriptPanel 
+                script={script} 
+                onRegenerate={() => generationOptionsRef.current && handleGenerate(generationOptionsRef.current)}
+              />
+
+              {scenes.length > 0 && (
+                <>
+                  <Card>
+                    <CardContent className="p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-2xl font-bold">Generated Images</h2>
+                        <Button 
+                          onClick={downloadImages} 
+                          variant="outline" 
+                          size="sm"
+                          disabled={!scenes.some(s => s.imageUrl)}
+                        >
+                          <Archive className="w-4 h-4 mr-2" />
+                          Download Images (.zip)
+                        </Button>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {scenes.map((scene, index) => (
+                          <motion.div
+                            key={scene.sceneNumber}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: index * 0.1 }}
+                            className="border rounded-lg overflow-hidden"
+                          >
+                            <div className="aspect-video bg-muted relative">
+                              {scene.imageUrl ? (
+                                <img
+                                  src={scene.imageUrl}
+                                  alt={`Scene ${scene.sceneNumber}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : currentlyGenerating === index && !isGeneratingAudio ? (
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                                </div>
+                              ) : (
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                  <ImageIcon className="w-12 h-12 text-muted-foreground" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <h3 className="font-semibold">Scene {scene.sceneNumber}</h3>
+                                {scene.audioUrl && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handlePlayAudio(index, scene.audioUrl!)}
+                                  >
+                                    {playingAudio === index ? (
+                                      <Pause className="w-4 h-4" />
+                                    ) : (
+                                      <Play className="w-4 h-4" />
+                                    )}
+                                  </Button>
+                                )}
+                                {isGeneratingAudio && currentlyGenerating === index && (
+                                  <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                )}
+                              </div>
+                              <p className="text-sm text-muted-foreground line-clamp-2">
+                                {scene.visualDescription}
+                              </p>
+                              <p className="text-xs text-muted-foreground italic line-clamp-2">
+                                "{scene.narration}"
+                              </p>
+                            </div>
+                          </motion.div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent className="p-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h2 className="text-2xl font-bold">Narration</h2>
+                          <div className="flex items-center gap-4">
+                            {scenes.some(s => s.audioUrl) && (
+                              <>
+                                <div className="text-sm text-muted-foreground">
+                                  {scenes.filter(s => s.audioUrl).length} / {scenes.length} scenes narrated
+                                </div>
+                                <Button 
+                                  onClick={downloadAudio} 
+                                  variant="outline" 
+                                  size="sm"
+                                  disabled={!scenes.some(s => s.audioUrl)}
+                                >
+                                  <Archive className="w-4 h-4 mr-2" />
+                                  Download Audio (.zip)
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <Volume2 className="w-4 h-4" />
+                            <span className="font-medium">Selected:</span>
+                            <span>{getVoiceDisplayName()}</span>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <VoiceSelector
+                              selectedVoice={selectedVoice}
+                              onVoiceChange={setSelectedVoice}
+                              selectedProvider={selectedProvider}
+                              onProviderChange={setSelectedProvider}
+                              disabled={isProcessing || isGeneratingAudio}
+                            />
+                            
+                            <Button
+                              onClick={handleGenerateNarration}
+                              disabled={isProcessing || isGeneratingAudio || !scenes.some(s => s.imageUrl)}
+                              size="lg"
+                            >
+                            {isGeneratingAudio ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Generating Audio...
+                              </>
+                            ) : scenes.some(s => s.audioUrl) ? (
+                              <>
+                                <Volume2 className="w-4 h-4 mr-2" />
+                                Regenerate Narration
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-4 h-4 mr-2" />
+                                Generate Narration
+                              </>
+                            )}
+                          </Button>
+                          </div>
+                        </div>
+
+                        <div className="bg-muted p-4 rounded-lg text-sm">
+                          <p className="font-medium mb-2">About Narration</p>
+                          <p className="text-muted-foreground">
+                            High-quality text-to-speech narration using OpenAI TTS via AIML API. 
+                            Select a voice and click "Generate Narration" to add audio to all scenes.
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </>
+              )}
+            </>
+          )}
+        </motion.div>
       </main>
-
-      <footer className="border-t border-border py-6 mt-12">
-        <div className="container mx-auto px-4 text-center">
-          <p className="text-sm text-muted-foreground">
-            © 2026 The Adventurous Investor. AI-powered video generation.
-          </p>
-        </div>
-      </footer>
     </div>
   );
 };

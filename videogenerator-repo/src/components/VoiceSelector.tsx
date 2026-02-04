@@ -17,155 +17,158 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
-import { Info, Volume2, Sparkles } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Volume2 } from "lucide-react";
 
 interface VoiceOption {
   value: string;
   label: string;
-  provider: string;
-  language?: string;
-  gender?: string;
-  quality?: string;
+  gender: string;
 }
 
-interface TTSProvider {
-  name: string;
-  icon: string;
-  freeCredits: string;
-  quality: string;
-  voices: VoiceOption[];
-  setup: string;
-  recommended?: boolean;
-}
+// AIML API (OpenAI TTS) voices
+const aimlVoices: VoiceOption[] = [
+  { value: "alloy", label: "Alloy (Neutral)", gender: "Neutral" },
+  { value: "echo", label: "Echo (Male)", gender: "Male" },
+  { value: "fable", label: "Fable (British Male)", gender: "Male" },
+  { value: "onyx", label: "Onyx (Deep Male)", gender: "Male" },
+  { value: "nova", label: "Nova (Female)", gender: "Female" },
+  { value: "shimmer", label: "Shimmer (Female)", gender: "Female" },
+  { value: "coral", label: "Coral (Warm Female)", gender: "Female" },
+];
 
-// Only Google Cloud TTS is configured
-const ttsProviders: TTSProvider[] = [
-  {
-    name: "Google Cloud TTS",
-    icon: "🎙️",
-    freeCredits: "1M chars/month",
-    quality: "⭐⭐⭐⭐⭐",
-    recommended: true,
-    setup: "Currently configured",
-    voices: [
-      { value: "en-US-Neural2-J", label: "US Male (Neural2-J)", provider: "google", language: "en-US", gender: "Male", quality: "High" },
-      { value: "en-US-Neural2-F", label: "US Female (Neural2-F)", provider: "google", language: "en-US", gender: "Female", quality: "High" },
-      { value: "en-US-Neural2-D", label: "US Warm Male (Neural2-D)", provider: "google", language: "en-US", gender: "Male", quality: "High" },
-      { value: "en-US-Neural2-C", label: "US Professional Female (Neural2-C)", provider: "google", language: "en-US", gender: "Female", quality: "High" },
-      { value: "en-GB-Neural2-D", label: "UK Male (Neural2-D)", provider: "google", language: "en-GB", gender: "Male", quality: "High" },
-      { value: "en-GB-Neural2-F", label: "UK Female (Neural2-F)", provider: "google", language: "en-GB", gender: "Female", quality: "High" },
-      { value: "en-AU-Neural2-B", label: "AU Male (Neural2-B)", provider: "google", language: "en-AU", gender: "Male", quality: "High" },
-      { value: "en-AU-Neural2-C", label: "AU Female (Neural2-C)", provider: "google", language: "en-AU", gender: "Female", quality: "High" },
-    ],
-  },
+// Voice RSS voices (language codes)
+const voiceRssVoices: VoiceOption[] = [
+  { value: "en-us", label: "English US (Male)", gender: "Male" },
+  { value: "en-gb", label: "English UK (Male)", gender: "Male" },
+  { value: "en-au", label: "English AU (Male)", gender: "Male" },
+  { value: "en-in", label: "English India (Male)", gender: "Male" },
+  { value: "es-es", label: "Spanish Spain (Male)", gender: "Male" },
+  { value: "es-mx", label: "Spanish Mexico (Male)", gender: "Male" },
+  { value: "fr-fr", label: "French (Male)", gender: "Male" },
+  { value: "de-de", label: "German (Male)", gender: "Male" },
+  { value: "it-it", label: "Italian (Male)", gender: "Male" },
+  { value: "pt-br", label: "Portuguese Brazil (Male)", gender: "Male" },
+  { value: "ja-jp", label: "Japanese (Female)", gender: "Female" },
+  { value: "ko-kr", label: "Korean (Female)", gender: "Female" },
+  { value: "zh-cn", label: "Chinese Mandarin (Female)", gender: "Female" },
+  { value: "hi-in", label: "Hindi (Female)", gender: "Female" },
 ];
 
 interface VoiceSelectorProps {
   selectedVoice: string;
   onVoiceChange: (voice: string) => void;
+  selectedProvider: string;
+  onProviderChange: (provider: string) => void;
+  disabled?: boolean;
 }
 
-export const VoiceSelector = ({ selectedVoice, onVoiceChange }: VoiceSelectorProps) => {
+export const VoiceSelector = ({ 
+  selectedVoice, 
+  onVoiceChange, 
+  selectedProvider,
+  onProviderChange,
+  disabled = false 
+}: VoiceSelectorProps) => {
   const [open, setOpen] = useState(false);
 
-  // Find current provider and voice
-  const getCurrentVoice = () => {
-    for (const provider of ttsProviders) {
-      const voice = provider.voices.find(v => v.value === selectedVoice);
-      if (voice) return { provider, voice };
-    }
-    return null;
+  const getCurrentVoices = () => {
+    return selectedProvider === "voicerss" ? voiceRssVoices : aimlVoices;
   };
 
-  const current = getCurrentVoice();
-  const displayLabel = current?.voice.label || "Select Voice";
+  const selectedVoiceData = getCurrentVoices().find(v => v.value === selectedVoice);
+
+  const handleProviderChange = (provider: string) => {
+    onProviderChange(provider);
+    // Set default voice for the provider
+    if (provider === "voicerss") {
+      onVoiceChange("en-us");
+    } else {
+      onVoiceChange("coral");
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="gap-2">
-          <Volume2 className="w-4 h-4" />
-          {displayLabel}
-          <Info className="w-3 h-3 text-muted-foreground" />
+        <Button variant="outline" disabled={disabled} className="w-full">
+          <Volume2 className="w-4 h-4 mr-2" />
+          {selectedVoiceData ? selectedVoiceData.label : "Select Voice"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Volume2 className="w-5 h-5 text-primary" />
-            Select Narration Voice
-          </DialogTitle>
+          <DialogTitle>Select Narration Voice</DialogTitle>
           <DialogDescription>
-            Choose a voice for high-quality narration using Google Cloud Text-to-Speech.
+            Choose a TTS provider and voice for narrating your video scenes.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
-          {ttsProviders.map((provider) => (
-            <div key={provider.name} className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-2xl">{provider.icon}</span>
-                <h3 className="font-semibold text-lg">{provider.name}</h3>
-                <Badge variant="default" className="gap-1">
-                  <Sparkles className="w-3 h-3" />
-                  Active
-                </Badge>
-              </div>
-              <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">
-                  <strong>Free:</strong> {provider.freeCredits}
-                </span>
-                <span>•</span>
-                <span className="flex items-center gap-1">
-                  <strong>Quality:</strong> {provider.quality}
-                </span>
-              </div>
-
-              <Select
-                value={selectedVoice}
-                onValueChange={onVoiceChange}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose a voice" />
+          <Tabs value={selectedProvider} onValueChange={handleProviderChange}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="aiml">AIML (OpenAI)</TabsTrigger>
+              <TabsTrigger value="voicerss">Voice RSS</TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="aiml" className="space-y-4">
+              <Select value={selectedVoice} onValueChange={onVoiceChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a voice" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    <SelectLabel>Available Voices</SelectLabel>
-                    {provider.voices.map((voice) => (
+                    <SelectLabel>OpenAI TTS Voices</SelectLabel>
+                    {aimlVoices.map((voice) => (
                       <SelectItem key={voice.value} value={voice.value}>
-                        <div className="flex items-center gap-2">
-                          <span>{voice.label}</span>
-                          {voice.gender && (
-                            <Badge variant="outline" className="text-xs">
-                              {voice.gender}
-                            </Badge>
-                          )}
-                          {voice.language && voice.language !== "en-US" && (
-                            <Badge variant="secondary" className="text-xs">
-                              {voice.language}
-                            </Badge>
-                          )}
-                        </div>
+                        {voice.label}
                       </SelectItem>
                     ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
-            </div>
-          ))}
-        </div>
 
-        <div className="bg-muted/50 rounded-lg p-3 space-y-1">
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            <strong>Note:</strong> If Google Cloud TTS fails, the system automatically falls back to browser TTS.
-          </p>
-        </div>
+              <div className="bg-muted p-4 rounded-lg text-sm space-y-2">
+                <p className="font-medium">About AIML (OpenAI TTS)</p>
+                <p className="text-muted-foreground">
+                  High-quality, natural-sounding voices powered by OpenAI's latest TTS models.
+                </p>
+              </div>
+            </TabsContent>
 
-        <Button onClick={() => setOpen(false)} className="w-full">
-          Close
-        </Button>
+            <TabsContent value="voicerss" className="space-y-4">
+              <Select value={selectedVoice} onValueChange={onVoiceChange}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a voice" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Voice RSS Languages</SelectLabel>
+                    {voiceRssVoices.map((voice) => (
+                      <SelectItem key={voice.value} value={voice.value}>
+                        {voice.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+
+              <div className="bg-muted p-4 rounded-lg text-sm space-y-2">
+                <p className="font-medium">About Voice RSS</p>
+                <p className="text-muted-foreground">
+                  Multi-language TTS service with support for 40+ languages and dialects.
+                </p>
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <Button 
+            onClick={() => setOpen(false)} 
+            className="w-full"
+          >
+            Confirm Selection
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

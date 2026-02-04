@@ -8,396 +8,193 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-interface NarrationRequest {
-  text: string;
-  sceneNumber: number;
-  generationId: string;
-  voice?: string;
-}
+// Chunked ArrayBuffer -> base64 to avoid call stack overflow on large payloads
+const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000; // 32K
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode.apply(null, Array.from(slice) as number[]);
+  }
+  return btoa(binary);
+};
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const { text, sceneNumber, generationId, voice = "alloy" }: NarrationRequest = await req.json();
+    const { text, voice = "coral", sceneNumber, generationId, provider = "aiml" } = await req.json();
 
-    if (!text || !generationId) {
+    if (!text || typeof text !== "string") {
       return new Response(
-        JSON.stringify({ error: "Missing required fields: text, generationId" }),
+        JSON.stringify({ error: "Text is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Generating narration for scene ${sceneNumber}...`);
+    console.log(`Generating narration for scene ${sceneNumber || 'unknown'} with voice: ${voice}, provider: ${provider}`);
 
-    // Option 0: Google Cloud Text-to-Speech (Primary - Best for production)
-    const googleApiKey = Deno.env.get("GOOGLE_CLOUD_TTS_API_KEY");
-    
-    if (googleApiKey) {
-      try {
-        console.log("Using Google Cloud Text-to-Speech...");
-        
-        // Map voice names to their actual gender
-        const voiceGenderMap: { [key: string]: "MALE" | "FEMALE" } = {
-          "en-US-Neural2-J": "MALE",
-          "en-US-Neural2-D": "MALE",
-          "en-US-Neural2-I": "MALE",
-          "en-US-Neural2-F": "FEMALE",
-          "en-US-Neural2-C": "FEMALE",
-          "en-US-Neural2-E": "FEMALE",
-          "en-GB-Neural2-D": "MALE",
-          "en-GB-Neural2-F": "FEMALE",
-          "en-AU-Neural2-B": "MALE",
-          "en-AU-Neural2-C": "FEMALE",
-        };
-        
-        const voiceName = voice || "en-US-Neural2-J";
-        const languageCode = voiceName.split('-').slice(0, 2).join('-');
-        const gender = voiceGenderMap[voiceName] || "MALE";
-        
-        const googleTTSResponse = await fetch(
-          `https://texttospeech.googleapis.com/v1/text:synthesize?key=${googleApiKey}`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              input: { text: text },
-              voice: {
-                languageCode: languageCode,
-                name: voiceName,
-                ssmlGender: gender
-              },
-              audioConfig: {
-                audioEncoding: "MP3",
-                speakingRate: 0.9,
-                pitch: 0.0,
-                volumeGainDb: 0.0,
-                effectsProfileId: ["small-bluetooth-speaker-class-device"]
-              }
-            }),
-          }
+    let audioUrl: string;
+    let characters = 0;
+
+    // Voice RSS TTS Provider
+    if (provider === "voicerss") {
+      const VOICERSS_API_KEY = Deno.env.get("VOICERSS_API_KEY");
+      if (!VOICERSS_API_KEY) {
+        console.error("VOICERSS_API_KEY is not configured");
+        return new Response(
+          JSON.stringify({ error: "Voice RSS API key not configured. Please add VOICERSS_API_KEY to Supabase secrets." }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
-
-        if (!googleTTSResponse.ok) {
-          const errorText = await googleTTSResponse.text();
-          throw new Error(`Google Cloud TTS failed: ${errorText}`);
-        }
-
-        const googleData = await googleTTSResponse.json();
-        
-        if (googleData.audioContent) {
-          // Decode base64 audio
-          const audioBytes = Uint8Array.from(atob(googleData.audioContent), c => c.charCodeAt(0));
-          
-          // Upload to Supabase Storage
-          const supabase = createClient(
-            Deno.env.get("SUPABASE_URL") ?? "",
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-          );
-
-          const fileName = `${generationId}/narration/scene_${sceneNumber}_${Date.now()}.mp3`;
-          
-          const { error: uploadError } = await supabase.storage
-            .from("generated-content")
-            .upload(fileName, audioBytes, {
-              contentType: "audio/mpeg",
-              upsert: false,
-            });
-
-          if (uploadError) {
-            console.error("Storage upload error:", uploadError);
-            // Fallback: return base64 data URL
-            return new Response(
-              JSON.stringify({
-                success: true,
-                audioUrl: `data:audio/mpeg;base64,${googleData.audioContent}`,
-                sceneNumber,
-                provider: "google-cloud-tts"
-              }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-          }
-
-          // Get public URL
-          const { data: urlData } = supabase.storage
-            .from("generated-content")
-            .getPublicUrl(fileName);
-
-          console.log(`Google Cloud TTS narration generated: ${urlData.publicUrl}`);
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              audioUrl: urlData.publicUrl,
-              sceneNumber,
-              provider: "google-cloud-tts"
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      } catch (googleError) {
-        console.error("Google Cloud TTS error:", googleError);
-        console.log("Falling back to next TTS option...");
-        // Continue to next option
       }
-    }
 
-    // Option 1: Chatterbox TTS (if available)
-    const chatterboxUrl = Deno.env.get("CHATTERBOX_TTS_URL");
-    
-    if (chatterboxUrl) {
-      try {
-        console.log("Using Chatterbox TTS service...");
-        
-        const chatterboxResponse = await fetch(`${chatterboxUrl}/generate`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text: text,
-            language: "en", // Can be parameterized
-            scene_number: sceneNumber,
-          }),
-        });
+      // Build Voice RSS API request
+      const params = new URLSearchParams({
+        key: VOICERSS_API_KEY,
+        src: text,
+        hl: voice, // Voice RSS uses language codes like en-us, en-gb, etc.
+        c: "MP3",
+        f: "48khz_16bit_stereo",
+      });
 
-        if (!chatterboxResponse.ok) {
-          throw new Error(`Chatterbox TTS failed: ${await chatterboxResponse.text()}`);
-        }
+      const voiceRssUrl = `http://api.voicerss.org/?${params.toString()}`;
+      
+      console.log(`Calling Voice RSS API with language: ${voice}`);
+      const response = await fetch(voiceRssUrl);
 
-        const chatterboxData = await chatterboxResponse.json();
-        
-        if (chatterboxData.success) {
-          // Download the audio file from Chatterbox service
-          const audioResponse = await fetch(`${chatterboxUrl}${chatterboxData.audio_url}`);
-          
-          if (!audioResponse.ok) {
-            throw new Error("Failed to download audio from Chatterbox");
-          }
-
-          const audioBlob = await audioResponse.blob();
-          const audioBuffer = await audioBlob.arrayBuffer();
-          
-          // Upload to Supabase Storage
-          const supabase = createClient(
-            Deno.env.get("SUPABASE_URL") ?? "",
-            Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-          );
-
-          const fileName = `${generationId}/narration/scene_${sceneNumber}_${Date.now()}.wav`;
-          
-          const { error: uploadError } = await supabase.storage
-            .from("generated-content")
-            .upload(fileName, audioBuffer, {
-              contentType: "audio/wav",
-              upsert: false,
-            });
-
-          if (uploadError) {
-            console.error("Storage upload error:", uploadError);
-            // Return Chatterbox URL as fallback
-            return new Response(
-              JSON.stringify({
-                success: true,
-                audioUrl: `${chatterboxUrl}${chatterboxData.audio_url}`,
-                sceneNumber,
-                provider: "chatterbox",
-                duration: chatterboxData.duration_seconds
-              }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-          }
-
-          // Get public URL
-          const { data: urlData } = supabase.storage
-            .from("generated-content")
-            .getPublicUrl(fileName);
-
-          console.log(`Chatterbox narration generated: ${urlData.publicUrl}`);
-
-          return new Response(
-            JSON.stringify({
-              success: true,
-              audioUrl: urlData.publicUrl,
-              sceneNumber,
-              provider: "chatterbox",
-              duration: chatterboxData.duration_seconds
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-      } catch (chatterboxError) {
-        console.error("Chatterbox TTS error:", chatterboxError);
-        console.log("Falling back to OpenAI TTS...");
-        // Continue to next option
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Voice RSS API error:", response.status, errorText);
+        return new Response(
+          JSON.stringify({ error: "Failed to generate narration with Voice RSS", details: errorText }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-    }
 
-    // Option 2: OpenAI TTS (requires OPENAI_API_KEY in Supabase secrets)
-    const openaiKey = Deno.env.get("OPENAI_API_KEY");
-    
-    if (openaiKey) {
-      // Use OpenAI TTS API
-      const response = await fetch("https://api.openai.com/v1/audio/speech", {
+      // Check if response is actually an error message (Voice RSS returns errors as text)
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/plain")) {
+        const responseText = await response.text();
+        // Voice RSS returns error messages like "ERROR: Invalid API key"
+        if (responseText.startsWith("ERROR:")) {
+          console.error("Voice RSS error response:", responseText);
+          return new Response(
+            JSON.stringify({ error: "Voice RSS API Error", details: responseText }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+      }
+
+      // Voice RSS returns audio directly, convert to base64 data URL
+      const audioBuffer = await response.arrayBuffer();
+      const base64Audio = arrayBufferToBase64(audioBuffer);
+      audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+      characters = text.length;
+      
+      console.log(`Voice RSS narration generated successfully. Characters: ${characters}, Audio size: ${audioBuffer.byteLength} bytes`);
+    } 
+    // AIML TTS Provider (default)
+    else {
+      const AIML_API_KEY = Deno.env.get("AIML_API_KEY");
+      if (!AIML_API_KEY) {
+        console.error("AIML_API_KEY is not configured");
+        return new Response(
+          JSON.stringify({ error: "AIML API key not configured. Please add AIML_API_KEY to Supabase secrets." }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Call AIML API for TTS
+      const response = await fetch("https://api.aimlapi.com/v1/tts", {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${openaiKey}`,
+          "Authorization": `Bearer ${AIML_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "tts-1",
-          voice: voice, // alloy, echo, fable, onyx, nova, shimmer
-          input: text,
-          speed: 0.9,
+          model: "openai/gpt-4o-mini-tts",
+          text,
+          voice,
         }),
       });
 
       if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`OpenAI TTS failed: ${error}`);
-      }
-
-      // Get audio as blob
-      const audioBlob = await response.blob();
-      const audioBuffer = await audioBlob.arrayBuffer();
-      const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
-      
-      // Upload to Supabase Storage
-      const supabase = createClient(
-        Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-      );
-
-      const fileName = `${generationId}/narration/scene_${sceneNumber}_${Date.now()}.mp3`;
-      
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from("generated-content")
-        .upload(fileName, audioBuffer, {
-          contentType: "audio/mpeg",
-          upsert: false,
-        });
-
-      if (uploadError) {
-        console.error("Storage upload error:", uploadError);
-        // Fallback: return base64 data URL
+        const errorText = await response.text();
+        console.error("AIML API error:", response.status, errorText);
         return new Response(
-          JSON.stringify({
-            success: true,
-            audioUrl: `data:audio/mpeg;base64,${audioBase64}`,
-            sceneNumber,
-            provider: "openai-tts"
-          }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ error: "Failed to generate narration", details: errorText }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from("generated-content")
-        .getPublicUrl(fileName);
+      const data = await response.json();
+      
+      if (!data.audio || !data.audio.url) {
+        console.error("No audio URL in response");
+        return new Response(
+          JSON.stringify({ error: "No audio URL generated" }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
-      console.log(`Narration generated successfully: ${urlData.publicUrl}`);
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          audioUrl: urlData.publicUrl,
-          sceneNumber,
-          provider: "openai-tts"
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      audioUrl = data.audio.url;
+      characters = data.usage?.characters || 0;
+      
+      console.log(`AIML narration generated successfully. Characters: ${characters}`);
+      console.log(`Audio URL: ${audioUrl}`);
     }
 
-    // Option 3: ElevenLabs TTS (requires ELEVENLABS_API_KEY)
-    const elevenLabsKey = Deno.env.get("ELEVENLABS_API_KEY");
-    
-    if (elevenLabsKey) {
-      const voiceId = "21m00Tcm4TlvDq8ikWAM"; // Rachel voice (default)
-      const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": elevenLabsKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            text,
-            model_id: "eleven_monolingual_v1",
-            voice_settings: {
-              stability: 0.5,
-              similarity_boost: 0.75,
-            },
-          }),
+    // Initialize Supabase client
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      {
+        global: {
+          headers: { Authorization: req.headers.get('Authorization')! },
+        },
+      }
+    );
+
+    // Update generation record with audio URL if generationId is provided
+    if (generationId && sceneNumber) {
+      try {
+        const { error: updateError } = await supabaseClient
+          .from('generations')
+          .update({
+            metadata: supabaseClient.rpc('jsonb_set_nested', {
+              target: 'metadata',
+              path: `{scenes,${sceneNumber - 1},audioUrl}`,
+              new_value: JSON.stringify(audioUrl)
+            })
+          })
+          .eq('id', generationId);
+
+        if (updateError) {
+          console.error('Error updating generation with audio URL:', updateError);
         }
-      );
-
-      if (!response.ok) {
-        throw new Error(`ElevenLabs TTS failed: ${await response.text()}`);
+      } catch (dbError) {
+        console.error('Database update error:', dbError);
       }
-
-      const audioBlob = await response.blob();
-      const audioBuffer = await audioBlob.arrayBuffer();
-      
-      // Upload to Supabase Storage
-      const supabase = createClient(
-        Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-      );
-
-      const fileName = `${generationId}/narration/scene_${sceneNumber}_${Date.now()}.mp3`;
-      
-      const { error: uploadError } = await supabase.storage
-        .from("generated-content")
-        .upload(fileName, audioBuffer, {
-          contentType: "audio/mpeg",
-          upsert: false,
-        });
-
-      if (uploadError) {
-        throw new Error(`Storage upload failed: ${uploadError.message}`);
-      }
-
-      const { data: urlData } = supabase.storage
-        .from("generated-content")
-        .getPublicUrl(fileName);
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          audioUrl: urlData.publicUrl,
-          sceneNumber,
-          provider: "elevenlabs"
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
-    // Option 4: Fallback to browser-based TTS (return metadata only)
     return new Response(
-      JSON.stringify({
-        success: true,
-        audioUrl: null,
-        useBrowserTTS: true,
+      JSON.stringify({ 
+        audioUrl,
+        characters,
+        voice,
         sceneNumber,
-        text,
-        message: "No TTS API key configured. Use browser TTS on client side."
+        provider
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
-    console.error("Narration generation error:", error);
+    console.error("Generate narration error:", error);
     return new Response(
-      JSON.stringify({
-        error: error.message || "Failed to generate narration",
-        success: false
-      }),
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
