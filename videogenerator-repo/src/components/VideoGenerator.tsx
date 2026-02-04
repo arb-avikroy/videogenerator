@@ -16,9 +16,10 @@ interface Scene {
 interface VideoGeneratorProps {
   scenes: Scene[];
   scriptTitle: string;
+  onVideoGenerated?: (videoUrl: string) => void;
 }
 
-export const VideoGenerator = ({ scenes, scriptTitle }: VideoGeneratorProps) => {
+export const VideoGenerator = ({ scenes, scriptTitle, onVideoGenerated }: VideoGeneratorProps) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
@@ -48,6 +49,11 @@ export const VideoGenerator = ({ scenes, scriptTitle }: VideoGeneratorProps) => 
       // Create download URL
       const url = URL.createObjectURL(videoBlob);
       setVideoUrl(url);
+
+      // Notify parent component
+      if (onVideoGenerated) {
+        onVideoGenerated(url);
+      }
 
       toast.success("Video generated successfully!");
     } catch (error) {

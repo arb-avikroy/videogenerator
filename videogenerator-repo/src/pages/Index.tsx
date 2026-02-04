@@ -105,6 +105,54 @@ const Index = () => {
     generationOptionsRef.current = null;
   }, []);
 
+  const saveGenerationToDatabase = async (script: Script, scenes: Scene[], options: GenerationOptions, genId: string | null, videoUrl?: string) => {
+    if (!user || isGuest) return; // Only save for logged-in users
+
+    try {
+      const generationData = {
+        id: genId || undefined,
+        user_id: user.id,
+        title: script.title,
+        topic: options.topic,
+        script: {
+          title: script.title,
+          scenes: script.scenes
+        },
+        images: scenes.filter(s => s.imageUrl).map((s) => ({
+          sceneNumber: s.sceneNumber,
+          url: s.imageUrl,
+          prompt: s.visualDescription
+        })),
+        narration_audio: scenes.filter(s => s.audioUrl).map((s) => ({
+          sceneNumber: s.sceneNumber,
+          audioUrl: s.audioUrl
+        })),
+        merged_video: videoUrl || null,
+        metadata: {
+          model: options.model,
+          sceneCount: options.sceneCount,
+          sceneDuration: options.sceneDuration,
+          voice: selectedVoice,
+          provider: selectedProvider
+        }
+      };
+
+      const { data, error } = genId 
+        ? await supabase.from("generations").update(generationData).eq("id", genId).select().single()
+        : await supabase.from("generations").insert(generationData).select().single();
+
+      if (error) {
+        console.error("Error saving generation:", error);
+        return null;
+      }
+
+      return data?.id;
+    } catch (error) {
+      console.error("Save generation error:", error);
+      return null;
+    }
+  };
+
   const generateScript = async (options: GenerationOptions): Promise<{ script: Script; generationId: string | null }> => {
     const { topic, sceneCount, sceneDuration, model } = options;
     
@@ -232,6 +280,12 @@ const Index = () => {
 
     setCurrentlyGenerating(null);
     setIsGeneratingAudio(false);
+
+    // Save to database after generating narration
+    if (script && generationOptionsRef.current) {
+      await saveGenerationToDatabase(script, updatedScenes, generationOptionsRef.current, genId);
+    }
+
     return updatedScenes;
   };
   const handleGenerate = async (options: GenerationOptions) => {
@@ -627,6 +681,12 @@ const Index = () => {
                       audioUrl: scene.audioUrl
                     }))}
                     scriptTitle={script.title}
+                    onVideoGenerated={async (videoUrl) => {
+                      if (script && generationOptionsRef.current) {
+                        await saveGenerationToDatabase(script, scenes, generationOptionsRef.current, generationId, videoUrl);
+                        toast.success("Generation saved to history!");
+                      }
+                    }}
                   />
                 </>
               )}
