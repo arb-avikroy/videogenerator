@@ -5,6 +5,7 @@ import { Header } from "@/components/Header";
 import { InputSection, GenerationOptions, GenerationStage } from "@/components/InputSection";
 import { ScriptPanel } from "@/components/ScriptPanel";
 import { VoiceSelector } from "@/components/VoiceSelector";
+import { VideoGenerator } from "@/components/VideoGenerator";
 import { toast } from "sonner";
 import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -617,6 +618,16 @@ const Index = () => {
                       </div>
                     </CardContent>
                   </Card>
+
+                  <VideoGenerator 
+                    scenes={scenes.map((scene) => ({
+                      sceneNumber: scene.sceneNumber,
+                      text: scene.narration,
+                      imageUrl: scene.imageUrl || "",
+                      audioUrl: scene.audioUrl
+                    }))}
+                    scriptTitle={script.title}
+                  />
                 </>
               )}
             </>
