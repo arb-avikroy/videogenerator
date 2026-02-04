@@ -11,7 +11,7 @@ import { supabase, isSupabaseConfigured } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2, Archive, ImageIcon, Volume2, Play, Pause } from "lucide-react";
+import { Loader2, Archive, ImageIcon, Volume2, Play, Pause, Video } from "lucide-react";
 import JSZip from "jszip";
 
 interface Scene {
