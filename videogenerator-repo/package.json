@@ -10,7 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "deploy": "npm run build && npx supabase functions deploy --project-ref zzgfoxyawssvnzzjvotl",
-    "deploy:gh-pages": "npm run build && gh-pages -d dist"
+    "deploy:gh-pages": "npm run build && gh-pages -d dist --dotfiles"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.10",
