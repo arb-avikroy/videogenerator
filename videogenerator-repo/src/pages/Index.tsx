@@ -696,54 +696,79 @@ const Index = () => {
                           </div>
                         </div>
                         
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Volume2 className="w-4 h-4" />
-                            <span className="font-medium">Selected:</span>
-                            <span>{getVoiceDisplayName()}</span>
+                        {isGuest ? (
+                          <div className="space-y-4 text-center py-8">
+                            <div className="flex items-center justify-center">
+                              <Volume2 className="h-12 w-12 text-muted-foreground" />
+                            </div>
+                            <div>
+                              <h3 className="text-lg font-semibold mb-2">Audio Narration</h3>
+                              <p className="text-muted-foreground mb-4">
+                                Audio narration is only available for logged-in users.
+                              </p>
+                              <Button onClick={() => navigate("/login")} size="lg">
+                                Login to Generate Narration
+                              </Button>
+                            </div>
+                            <div className="bg-muted p-4 rounded-lg text-sm text-left">
+                              <p className="font-medium mb-2">Why login?</p>
+                              <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                                <li>High-quality text-to-speech narration</li>
+                                <li>Multiple voice options</li>
+                                <li>Save audio files to your history</li>
+                              </ul>
+                            </div>
                           </div>
-                          
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <VoiceSelector
-                              selectedVoice={selectedVoice}
-                              onVoiceChange={setSelectedVoice}
-                              selectedProvider={selectedProvider}
-                              onProviderChange={setSelectedProvider}
-                              disabled={isProcessing || isGeneratingAudio}
-                            />
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Volume2 className="w-4 h-4" />
+                              <span className="font-medium">Selected:</span>
+                              <span>{getVoiceDisplayName()}</span>
+                            </div>
                             
-                            <Button
-                              onClick={handleGenerateNarration}
-                              disabled={isProcessing || isGeneratingAudio || !scenes.some(s => s.imageUrl)}
-                              size="lg"
-                            >
-                            {isGeneratingAudio ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Generating Audio...
-                              </>
-                            ) : scenes.some(s => s.audioUrl) ? (
-                              <>
-                                <Volume2 className="w-4 h-4 mr-2" />
-                                Regenerate Narration
-                              </>
-                            ) : (
-                              <>
-                                <Volume2 className="w-4 h-4 mr-2" />
-                                Generate Narration
-                              </>
-                            )}
-                          </Button>
-                          </div>
-                        </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <VoiceSelector
+                                selectedVoice={selectedVoice}
+                                onVoiceChange={setSelectedVoice}
+                                selectedProvider={selectedProvider}
+                                onProviderChange={setSelectedProvider}
+                                disabled={isProcessing || isGeneratingAudio}
+                              />
+                              
+                              <Button
+                                onClick={handleGenerateNarration}
+                                disabled={isProcessing || isGeneratingAudio || !scenes.some(s => s.imageUrl)}
+                                size="lg"
+                              >
+                              {isGeneratingAudio ? (
+                                <>
+                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                  Generating Audio...
+                                </>
+                              ) : scenes.some(s => s.audioUrl) ? (
+                                <>
+                                  <Volume2 className="w-4 h-4 mr-2" />
+                                  Regenerate Narration
+                                </>
+                              ) : (
+                                <>
+                                  <Volume2 className="w-4 h-4 mr-2" />
+                                  Generate Narration
+                                </>
+                              )}
+                            </Button>
+                            </div>
 
-                        <div className="bg-muted p-4 rounded-lg text-sm">
-                          <p className="font-medium mb-2">About Narration</p>
-                          <p className="text-muted-foreground">
-                            High-quality text-to-speech narration using OpenAI TTS via AIML API. 
-                            Select a voice and click "Generate Narration" to add audio to all scenes.
-                          </p>
-                        </div>
+                            <div className="bg-muted p-4 rounded-lg text-sm">
+                              <p className="font-medium mb-2">About Narration</p>
+                              <p className="text-muted-foreground">
+                                High-quality text-to-speech narration using OpenAI TTS via AIML API. 
+                                Select a voice and click "Generate Narration" to add audio to all scenes.
+                              </p>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </CardContent>
                   </Card>

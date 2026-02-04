@@ -108,34 +108,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const guestId = localStorage.getItem(GUEST_SESSION_KEY);
     if (!guestId || !session) return;
 
-    try {
-      const { data, error } = await supabase.functions.invoke('migrate-guest-data', {
-        body: { guestSessionId: guestId },
-      });
-
-      if (error) throw error;
-
-      const migratedCount = data?.count || 0;
-      localStorage.removeItem(GUEST_SESSION_KEY);
-      setGuestSessionId(null);
-
-      if (migratedCount > 0) {
-        toast({
-          title: "Data Migrated",
-          description: `${migratedCount} generation(s) have been saved to your account.`,
-        });
-      }
-    } catch (error) {
-      console.error('Guest data migration failed:', error);
-      toast({
-        title: "Migration Failed",
-        description: "Could not migrate guest data. Your new generations will be saved.",
-        variant: "destructive",
-      });
-      localStorage.removeItem(GUEST_SESSION_KEY);
-      setGuestSessionId(null);
-    }
-  }, [session, toast]);
+    // Guest generations are not saved to database, so no migration needed
+    // Just clean up the guest session ID
+    localStorage.removeItem(GUEST_SESSION_KEY);
+    setGuestSessionId(null);
+    console.log('Cleared guest session - no migration needed (guest data not saved)');
+  }, [session]);
 
   // Check for idle timeout
   useEffect(() => {
@@ -224,30 +202,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (event === 'SIGNED_IN') {
             const guestId = localStorage.getItem(GUEST_SESSION_KEY);
             if (guestId) {
-              setGuestSessionId(guestId);
-              // Trigger migration after a short delay to ensure session is established
-              setTimeout(async () => {
-                try {
-                  const { data, error } = await supabase.functions.invoke('migrate-guest-data', {
-                    body: { guestSessionId: guestId },
-                  });
-
-                  if (error) throw error;
-
-                  const migratedCount = data?.count || 0;
-                  localStorage.removeItem(GUEST_SESSION_KEY);
-                  setGuestSessionId(null);
-
-                  if (migratedCount > 0) {
-                    toast({
-                      title: "Data Migrated",
-                      description: `${migratedCount} generation(s) have been saved to your account.`,
-                    });
-                  }
-                } catch (error) {
-                  console.error('Guest data migration failed:', error);
-                  toast({
-                    title: "Migration Failed",
+              // Guest generations are not saved to database, so no migration needed
+              // Just clean up the guest session ID
+              localStorage.removeItem(GUEST_SESSION_KEY);
+              setGuestSessionId(null);
+              console.log('Cleared guest session after login');
+            }
+          }
                     description: "Could not migrate guest data. Your new generations will be saved.",
                     variant: "destructive",
                   });
