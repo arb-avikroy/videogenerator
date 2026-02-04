@@ -26,6 +26,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Add .nojekyll file
+        run: touch dist/.nojekyll
+
       - name: Copy CNAME
         run: cp public/CNAME dist/CNAME
 
