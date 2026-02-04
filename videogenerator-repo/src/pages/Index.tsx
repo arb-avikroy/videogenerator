@@ -560,10 +560,14 @@ const Index = () => {
     );
   }
 
+  // Allow both authenticated users and guests
   if (!user && !isGuest) {
+    console.log("No user and not guest, redirecting to login", { user, isGuest });
     navigate("/login");
     return null;
   }
+
+  console.log("User state:", { user: !!user, isGuest, guestSessionId });
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary">
