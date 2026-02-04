@@ -1,24 +1,81 @@
-# Adventurous Investor Hub
+# AI Video Content Creator
 
-A modern web application built with React, TypeScript, and Supabase.
+🎬 A powerful web application that generates complete videos from text using AI - from script writing to final video assembly, all in your browser.
 
-## Features
+🌐 **Live Demo:** [https://aicontentcreator.adventurousinvestorhub.com](https://aicontentcreator.adventurousinvestorhub.com)
+
+## ✨ Features
+
+### 🎯 End-to-End Video Generation Pipeline
+
+1. **Script Generation** - AI-powered script writing using multiple LLM models via OpenRouter
+2. **Image Generation** - Scene-by-scene visuals using Cloudflare Workers
+3. **Voice Narration** - Text-to-speech audio generation with Voice RSS and AIML APIs
+4. **Video Assembly** - Browser-based video processing using FFmpeg.wasm
+
+### 🔐 Authentication & User Management
 
 - Google Authentication via Supabase
-- Guest Mode support
-- Modern UI with Tailwind CSS and shadcn/ui components
-- Protected routes and session management
+- Guest Mode for quick testing
+- User history and generation tracking
+- Secure session management
 
-## Getting Started
+### 💾 Cloud Storage
+
+- Generated videos stored in Supabase Storage
+- Permanent URLs for downloads
+- Automatic cleanup for guest users
+
+### 🎨 Modern UI/UX
+
+- Responsive design with Tailwind CSS
+- Accessible components via shadcn/ui
+- Real-time progress tracking
+- Smooth animations with Framer Motion
+
+## 🤖 AI Technologies Used
+
+### Script Generation (OpenRouter LLMs)
+
+Choose from 20+ language models including:
+- **Google Gemini** (gemini-2.0-flash-exp, gemini-1.5-pro)
+- **Anthropic Claude** (claude-3.5-sonnet, claude-3-opus)
+- **OpenAI GPT** (gpt-4o, gpt-4-turbo, gpt-3.5-turbo)
+- **Meta Llama** (llama-3.3-70b, llama-3.1-405b)
+- **Mistral AI** (mistral-large, mistral-medium)
+- **DeepSeek** (deepseek-chat, deepseek-r1)
+- And many more specialized models
+
+### Image Generation
+
+- **Cloudflare Workers** - Fast, scalable image generation
+
+### Text-to-Speech (TTS)
+
+- **Voice RSS** - High-quality voices, multiple languages
+- **AIML API** - Natural-sounding narration
+- **Browser TTS** - Offline fallback option
+
+### Video Processing
+
+- **FFmpeg.wasm** - Client-side video assembly from images and audio
+- No server-side rendering required
+- Works entirely in the browser
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
-- Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+- Node.js & npm - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
 - Supabase account and project
+- API keys for:
+  - OpenRouter (for LLM models)
+  - Cloudflare Workers (for image generation)
+  - Voice RSS or AIML (for TTS)
 
 ### Installation
 
-```sh
+```bash
 # Clone the repository
 git clone <YOUR_GIT_URL>
 
@@ -32,165 +89,97 @@ npm install
 npm run dev
 ```
 
-## Project Structure
+### Configuration
 
-```
-videogenerator-repo/
-├── src/
-│   ├── components/      # Reusable UI components
-│   │   ├── auth/       # Authentication components
-│   │   └── ui/         # shadcn/ui components
-│   ├── contexts/       # React contexts (Auth)
-│   ├── hooks/          # Custom React hooks
-│   ├── integrations/   # External integrations (Supabase)
-│   ├── lib/            # Utility functions
-│   └── pages/          # Application pages
-├── supabase/
-│   ├── functions/      # Edge Functions
-│   └── migrations/     # Database migrations
-└── public/             # Static assets
-```
-
-## Configuration
-
-Create a `.env` file in the root directory with your Supabase credentials:
+Create a `.env` file in the root directory:
 
 ```env
 VITE_SUPABASE_URL=your-supabase-url
 VITE_SUPABASE_PUBLISHABLE_KEY=your-supabase-anon-key
 ```
 
-## Available Scripts
+Configure Supabase Edge Functions secrets:
+
+```bash
+# OpenRouter for LLM models
+npx supabase secrets set OPENROUTER_API_KEY=sk-or-v1-...
+
+# Cloudflare Worker for images
+npx supabase secrets set CLOUDFLARE_WORKER_URL=https://your-worker.workers.dev
+
+# Voice RSS for TTS
+npx supabase secrets set VOICERSS_API_KEY=your-voicerss-key
+
+# AIML for TTS
+npx supabase secrets set AIML_API_KEY=your-aiml-key
+```
+
+## 📦 Project Structure
+
+```
+videogenerator-repo/
+├── src/
+│   ├── components/          # React components
+│   │   ├── VideoGenerator.tsx   # Video assembly logic
+│   │   ├── ScriptPanel.tsx      # Script generation UI
+│   │   ├── ModelSelector.tsx    # LLM model selection
+│   │   ├── VoiceSelector.tsx    # TTS voice selection
+│   │   ├── auth/               # Authentication components
+│   │   └── ui/                 # shadcn/ui components
+│   ├── contexts/           # React contexts (Auth)
+│   ├── hooks/              # Custom React hooks
+│   ├── integrations/       # External integrations (Supabase)
+│   ├── lib/
+│   │   └── videoAssembly.ts    # FFmpeg video processing
+│   └── pages/
+│       ├── Index.tsx           # Main generation page
+│       └── History.tsx         # User generation history
+├── supabase/
+│   ├── functions/          # Edge Functions
+│   │   ├── generate-script/    # LLM script generation
+│   │   ├── generate-image/     # Image generation
+│   │   ├── generate-narration/ # TTS audio generation
+│   │   └── generate-video/     # Video metadata
+│   └── migrations/         # Database schema
+└── public/                 # Static assets
+```
+
+## 🛠️ Tech Stack
+
+- **Frontend**: React 18, TypeScript, Vite
+- **Styling**: Tailwind CSS, shadcn/ui, Radix UI
+- **Backend**: Supabase (PostgreSQL, Auth, Storage, Edge Functions)
+- **Routing**: React Router 6
+- **State Management**: TanStack Query (React Query)
+- **Animations**: Framer Motion
+- **Video Processing**: FFmpeg.wasm
+- **AI Integration**: OpenRouter, Cloudflare Workers, Voice RSS, AIML
+
+## 📜 Available Scripts
 
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
 - `npm run preview` - Preview production build
 - `npm run lint` - Run ESLint
+- `npm run deploy` - Deploy to GitHub Pages
 
-## Tech Stack
+## 🎥 How It Works
 
-- **Frontend**: React 18, TypeScript, Vite
-- **Styling**: Tailwind CSS, shadcn/ui
-- **Backend**: Supabase (Auth, Database, Edge Functions)
-- **Routing**: React Router
-- **State Management**: React Query
-- **Animations**: Framer Motion
+1. **User Input**: Enter a topic or prompt
+2. **Script Generation**: Selected LLM model generates a structured script
+3. **Image Generation**: Cloudflare Worker creates visuals for each scene
+4. **Audio Narration**: Voice RSS or AIML converts script to speech
+5. **Video Assembly**: FFmpeg.wasm merges images and audio into MP4
+6. **Cloud Storage**: Video uploaded to Supabase Storage
+7. **Download**: Permanent URL provided for sharing
 
-## License
+## 🔒 Security
+
+- Row Level Security (RLS) policies on all database tables
+- API keys stored as Supabase secrets (never exposed to client)
+- Google OAuth for secure authentication
+- Guest data automatically cleaned up after 7 days
+
+## 📄 License
 
 MIT
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
-
----
-
-## 🎙️ Text-to-Speech Integration
-
-The video generator now supports **5 TTS options** for high-quality narration audio:
-
-### Quick Setup (Recommended: Google Cloud TTS)
-
-1. **Enable Google Cloud Text-to-Speech API**
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Enable [Text-to-Speech API](https://console.cloud.google.com/apis/library/texttospeech.googleapis.com)
-
-2. **Create API Key**
-   - Go to [Credentials](https://console.cloud.google.com/apis/credentials)
-   - Create Credentials → API Key
-   - Copy the key (starts with `AIza...`)
-
-3. **Configure Supabase**
-   ```bash
-   npx supabase secrets set GOOGLE_CLOUD_TTS_API_KEY=AIzaSy...your-key
-   npx supabase functions deploy generate-narration
-   ```
-
-### TTS Priority System
-
-The system tries services in this order:
-
-1. **Google Cloud TTS** (if `GOOGLE_CLOUD_TTS_API_KEY` is set) ⭐ **Recommended**
-   - Cost: $16/1M characters (1M free/month)
-   - Quality: ⭐⭐⭐⭐⭐
-   - 380+ voices, 40+ languages
-
-2. **Chatterbox TTS** (if `CHATTERBOX_TTS_URL` is set)
-   - Cost: Free (self-hosted)
-   - Quality: ⭐⭐⭐⭐⭐
-   - Custom voices, 23+ languages
-
-3. **OpenAI TTS** (if `OPENAI_API_KEY` is set)
-   - Cost: $15/1M characters
-   - Quality: ⭐⭐⭐⭐
-   - 6 voices, fast generation
-
-4. **ElevenLabs** (if `ELEVENLABS_API_KEY` is set)
-   - Cost: Free tier (10k chars/month)
-   - Quality: ⭐⭐⭐⭐⭐
-   - 1000+ voices, voice cloning
-
-5. **Browser TTS** (always available)
-   - Cost: Free
-   - Quality: ⭐⭐⭐
-   - No setup needed
-
-### Detailed Setup Guides
-
-- 📖 **Google Cloud TTS:** See `GOOGLE_CLOUD_TTS_SETUP.md`
-- 📖 **Chatterbox TTS:** See `CHATTERBOX_SETUP.md` or `python-tts-service/QUICKSTART.md`
-- 📖 **Quick Reference:** See `TTS_QUICK_REFERENCE.md`
-- 📖 **Architecture:** See `TTS_ARCHITECTURE.md`
-
-### TTS Environment Variables
-
-Set in Supabase secrets:
-
-```bash
-# Google Cloud TTS (Recommended)
-npx supabase secrets set GOOGLE_CLOUD_TTS_API_KEY=AIza...
-
-# Chatterbox TTS (Python service URL)
-npx supabase secrets set CHATTERBOX_TTS_URL=https://your-service.railway.app
-
-# OpenAI TTS
-npx supabase secrets set OPENAI_API_KEY=sk-proj-...
-
-# ElevenLabs
-npx supabase secrets set ELEVENLABS_API_KEY=...
-```
-
----
-
-## Hugging Face image generation integration 🔧
-
-You can use Hugging Face for image generation by configuring an environment variable for the Supabase Edge Function:
-
-- `HUGGINGFACE_API_KEY` — your Hugging Face API key (set this as a Supabase project secret for production)
-
-How it works:
-- If `HUGGINGFACE_API_KEY` is present (and/or you choose **Image Provider → Hugging Face** in the UI), the `generate-image` function will call the Hugging Face Inference API and return the produced image (as a data URL).
-- If Hugging Face returns a billing error (402 / "insufficient credits") or fails to produce an image, the function will fall back to OpenRouter (if `OPENROUTER_API_KEY` is configured).
-- You can also select **Image Provider → OpenRouter** in the UI to force OpenRouter.
-
-If you prefer OpenRouter only, leave `HUGGINGFACE_API_KEY` empty and the function will continue using OpenRouter by default.
