@@ -120,7 +120,8 @@ const Index = () => {
   }, []);
 
   const saveGenerationToDatabase = async (script: Script, scenes: Scene[], options: GenerationOptions, genId: string | null, videoUrl?: string) => {
-    if (!user || isGuest) return null; // Only save for logged-in users
+    // Don't save anything for guest users
+    if (!user || isGuest) return null;
 
     try {
       const generationData = {
@@ -743,33 +744,60 @@ const Index = () => {
                     </CardContent>
                   </Card>
 
-                  <VideoGenerator 
-                    scenes={scenes.map((scene) => ({
-                      sceneNumber: scene.sceneNumber,
-                      text: scene.narration,
-                      imageUrl: scene.imageUrl || "",
-                      audioUrl: scene.audioUrl
-                    }))}
-                    scriptTitle={script.title}
-                    onVideoGenerated={async (videoUrl) => {
-                      if (script && generationOptionsRef.current) {
-                        try {
-                          const savedId = await saveGenerationToDatabase(script, scenes, generationOptionsRef.current, generationId, videoUrl);
-                          if (savedId) {
-                            toast.success("Video saved to history!");
-                          } else {
+                  {isGuest ? (
+                    <Card className="p-6">
+                      <div className="space-y-4 text-center">
+                        <div className="flex items-center justify-center">
+                          <Video className="h-12 w-12 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-semibold mb-2">Video Generation</h3>
+                          <p className="text-muted-foreground mb-4">
+                            Video generation is only available for logged-in users.
+                          </p>
+                          <Button onClick={() => navigate("/login")} size="lg">
+                            Login to Generate Video
+                          </Button>
+                        </div>
+                        <div className="bg-muted p-4 rounded-lg text-sm text-left">
+                          <p className="font-medium mb-2">Why login?</p>
+                          <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                            <li>Videos are saved to your history</li>
+                            <li>Download anytime from cloud storage</li>
+                            <li>Track all your generations</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </Card>
+                  ) : (
+                    <VideoGenerator 
+                      scenes={scenes.map((scene) => ({
+                        sceneNumber: scene.sceneNumber,
+                        text: scene.narration,
+                        imageUrl: scene.imageUrl || "",
+                        audioUrl: scene.audioUrl
+                      }))}
+                      scriptTitle={script.title}
+                      onVideoGenerated={async (videoUrl) => {
+                        if (script && generationOptionsRef.current) {
+                          try {
+                            const savedId = await saveGenerationToDatabase(script, scenes, generationOptionsRef.current, generationId, videoUrl);
+                            if (savedId) {
+                              toast.success("Video saved to history!");
+                            } else {
+                              toast.info("Video generated successfully!", {
+                                description: "History not saved due to server issues, but you can download it below."
+                              });
+                            }
+                          } catch (err) {
                             toast.info("Video generated successfully!", {
                               description: "History not saved due to server issues, but you can download it below."
                             });
                           }
-                        } catch (err) {
-                          toast.info("Video generated successfully!", {
-                            description: "History not saved due to server issues, but you can download it below."
-                          });
                         }
-                      }
-                    }}
-                  />
+                      }}
+                    />
+                  )}
                 </>
               )}
             </>
