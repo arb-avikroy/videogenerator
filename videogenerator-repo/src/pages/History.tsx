@@ -63,15 +63,20 @@ const History = () => {
   useEffect(() => {
     if (!authLoading && !user) {
       navigate("/login");
-      return;
     }
   }, [user, authLoading, navigate]);
 
   useEffect(() => {
-    if (user && !authLoading) {
+    let mounted = true;
+    
+    if (user && !authLoading && mounted) {
       fetchGenerations();
     }
-  }, [user, authLoading, fetchGenerations]);
+    
+    return () => {
+      mounted = false;
+    };
+  }, [user, authLoading]);
 
   const downloadGeneration = async (generation: Generation) => {
     setDownloadingId(generation.id);
