@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -31,10 +31,13 @@ const History = () => {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const fetchGenerations = useCallback(async () => {
-    if (!user) return;
+  // Simple fetch function without useCallback
+  const fetchGenerations = async () => {
+    if (!user) {
+      setLoading(false);
+      return;
+    }
     
-    setLoading(true);
     try {
       const { data, error } = await supabase
         .from("generations")
@@ -58,25 +61,22 @@ const History = () => {
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  };
 
+  // Single useEffect to handle auth and data loading
   useEffect(() => {
-    if (!authLoading && !user) {
+    // Don't do anything if auth is still loading
+    if (authLoading) return;
+    
+    // Redirect to login if no user
+    if (!user) {
       navigate("/login");
+      return;
     }
+    
+    // Fetch generations once user is confirmed
+    fetchGenerations();
   }, [user, authLoading, navigate]);
-
-  useEffect(() => {
-    let mounted = true;
-    
-    if (user && !authLoading && mounted) {
-      fetchGenerations();
-    }
-    
-    return () => {
-      mounted = false;
-    };
-  }, [user, authLoading]);
 
   const downloadGeneration = async (generation: Generation) => {
     setDownloadingId(generation.id);
