@@ -227,8 +227,8 @@ const History = () => {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString("en-US", {
-      year: "numeric",script?.scenes?.length || 0;
-    const audioCount = generation.script?.scenes
+      year: "numeric",
+      month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
@@ -237,8 +237,8 @@ const History = () => {
 
   const getAssetCounts = (generation: Generation) => {
     const scriptCount = generation.script ? 1 : 0;
-    const imageCount = generation.images?.length || 0;
-    const audioCount = generation.narration_audio?.length || 0;
+    const imageCount = generation.script?.scenes?.length || 0;
+    const audioCount = generation.script?.scenes?.length || 0;
     const videoCount = generation.merged_video ? 1 : 0;
     return { scriptCount, imageCount, audioCount, videoCount };
   };
