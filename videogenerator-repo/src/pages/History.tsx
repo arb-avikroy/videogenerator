@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Header } from "@/components/Header";
 import { Button } from "@/components/ui/button";
@@ -31,19 +31,9 @@ const History = () => {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      navigate("/login");
-    }
-  }, [user, authLoading, navigate]);
-
-  useEffect(() => {
-    if (user) {
-      fetchGenerations();
-    }
-  }, [user]);
-
-  const fetchGenerations = async () => {
+  const fetchGenerations = useCallback(async () => {
+    if (!user) return;
+    
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -53,38 +43,13 @@ const History = () => {
 
       if (error) throw error;
       
-      // Fetch counts separately for each generation
-      const generationsWithCounts = await Promise.all(
-        (data || []).map(async (gen) => {
-          // Get images count
-          const { count: imagesCount } = await supabase
-            .from("generations")
-            .select("images", { count: "exact", head: true })
-            .eq("id", gen.id)
-            .single();
-
-          // Get audio count
-          const { count: audioCount } = await supabase
-            .from("generations")
-            .select("narration_audio", { count: "exact", head: true })
-            .eq("id", gen.id)
-            .single();
-
-          // Check if video exists
-          const { data: videoData } = await supabase
-            .from("generations")
-            .select("merged_video")
-            .eq("id", gen.id)
-            .single();
-
-          return {
-            ...gen,
-            images: gen.script?.scenes || [],
-            narration_audio: gen.script?.scenes || [],
-            merged_video: videoData?.merged_video ? "exists" : null,
-          };
-        })
-      );
+      // Map data without additional queries
+      const generationsWithCounts = (data || []).map((gen) => ({
+        ...gen,
+        images: gen.script?.scenes || [],
+        narration_audio: gen.script?.scenes || [],
+        merged_video: null,
+      }));
 
       setGenerations(generationsWithCounts as Generation[]);
     } catch (error) {
@@ -93,7 +58,20 @@ const History = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/login");
+      return;
+    }
+  }, [user, authLoading, navigate]);
+
+  useEffect(() => {
+    if (user && !authLoading) {
+      fetchGenerations();
+    }
+  }, [user, authLoading, fetchGenerations]);
 
   const downloadGeneration = async (generation: Generation) => {
     setDownloadingId(generation.id);
