@@ -112,7 +112,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Just clean up the guest session ID
     localStorage.removeItem(GUEST_SESSION_KEY);
     setGuestSessionId(null);
-    console.log('Cleared guest session - no migration needed (guest data not saved)');
   }, [session]);
 
   // Check for idle timeout
@@ -206,7 +205,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Just clean up the guest session ID
               localStorage.removeItem(GUEST_SESSION_KEY);
               setGuestSessionId(null);
-              console.log('Cleared guest session after login');
             }
           }
         }
